@@ -1,0 +1,331 @@
+'use strict';
+
+// Servicios falsos que imitan el contrato de `deps` del plan sobre el estado
+// mutable de un fixture (`tests/fixtures/campaign.js`). Registran las
+// llamadas con efectos (envíos, escrituras de estado, registro, lock) y
+// permiten inyectar fallas, fijar reloj y cuota, y mutar la hoja o la
+// plantilla durante una ejecución mediante ganchos.
+//
+// Los falsos operan directamente sobre el fixture recibido: dos llamadas a
+// `createFakeDeps` con el mismo fixture comparten la hoja (útil para simular
+// una segunda ejecución), pero cada una tiene su propio `calls`.
+
+const LOG_SHEET_NAME = 'Registro Mail Merge';
+const LOG_HEADERS = ['Fecha', 'Campaña', 'Pestaña', 'Fila', 'Destinatario', 'Resultado', 'Detalle'];
+const EXPORTABLE = [
+  'application/vnd.google-apps.document',
+  'application/vnd.google-apps.spreadsheet',
+  'application/vnd.google-apps.presentation',
+];
+const DEFAULT_NOW = Date.UTC(2026, 10, 9, 12, 0, 0);
+
+function createFakeDeps(fixture, options = {}) {
+  const failOn = options.failOn || {};
+  const hooks = options.hooks || {};
+  const state = {
+    now: options.now === undefined ? DEFAULT_NOW : options.now,
+    quota: options.quota === undefined ? fixture.quota : options.quota,
+    campaignCounter: 0,
+  };
+
+  const calls = {
+    sent: [],
+    statusWrites: [],
+    logEntries: [],
+    lockCalls: [],
+    // Orden combinado de escrituras de estado y envíos, para verificar la
+    // secuencia ENVIANDO → send → Email Sent.
+    sequence: [],
+    // Llamadas de lectura a Drive (para verificar que no haya llamadas extra).
+    driveCalls: [],
+    configWrites: [],
+  };
+
+  function findSheet(sheetId) {
+    return fixture.sheets.find((sheet) => sheet.id === sheetId) || null;
+  }
+
+  function requireSheet(sheetId) {
+    const sheet = findSheet(sheetId);
+    if (!sheet) {
+      throw new Error('Falso: no existe la pestaña ' + sheetId);
+    }
+    return sheet;
+  }
+
+  function campaignSheet() {
+    return requireSheet(fixture.campaignSheetId);
+  }
+
+  function findDraft(draftId) {
+    return fixture.gmail.drafts.find((draft) => draft.id === draftId) || null;
+  }
+
+  function matchesFailure(rule, value) {
+    if (!rule) {
+      return false;
+    }
+    if (typeof rule === 'function') {
+      return Boolean(rule(value));
+    }
+    return true;
+  }
+
+  const sheets = {
+    listSheets() {
+      return fixture.sheets.map((sheet) => ({ id: sheet.id, name: sheet.name }));
+    },
+    readSheet(sheetId) {
+      const sheet = requireSheet(sheetId);
+      return {
+        id: sheet.id,
+        name: sheet.name,
+        values: sheet.values.map((row) => row.slice()),
+        hiddenByUser: sheet.values.map((row, i) => Boolean(sheet.hiddenByUser[i])),
+        hiddenByFilter: sheet.values.map((row, i) => Boolean(sheet.hiddenByFilter[i])),
+      };
+    },
+    readRow(sheetId, rowNumber, width) {
+      if (typeof hooks.beforeReadRow === 'function') {
+        hooks.beforeReadRow(rowNumber);
+      }
+      const sheet = requireSheet(sheetId);
+      const row = sheet.values[rowNumber - 1] || [];
+      const out = [];
+      for (let i = 0; i < width; i++) {
+        out.push(row[i] === undefined || row[i] === null ? '' : String(row[i]));
+      }
+      return out;
+    },
+    writeStatus(sheetId, rowNumber, column, value) {
+      const rule = failOn.writeStatus;
+      const fails =
+        rule &&
+        (rule.value === undefined || rule.value === value) &&
+        (rule.rowNumber === undefined || rule.rowNumber === rowNumber);
+      if (fails && !rule.afterWrite) {
+        calls.sequence.push({ type: 'writeStatus-failed', rowNumber, value });
+        throw new Error('Falso: falla al escribir el estado');
+      }
+      const sheet = requireSheet(sheetId);
+      while (sheet.values.length < rowNumber) {
+        sheet.values.push(sheet.values[0].map(() => ''));
+        sheet.hiddenByUser.push(false);
+        sheet.hiddenByFilter.push(false);
+      }
+      sheet.values[rowNumber - 1][column] = value;
+      calls.statusWrites.push({ sheetId, rowNumber, column, value });
+      calls.sequence.push({ type: 'writeStatus', rowNumber, value });
+      if (fails) {
+        throw new Error('Falso: falla después de escribir el estado');
+      }
+    },
+    appendLog(entry) {
+      if (matchesFailure(failOn.appendLog, entry)) {
+        throw new Error('Falso: falla al escribir el registro');
+      }
+      if (!fixture.sheets.some((sheet) => sheet.name === LOG_SHEET_NAME)) {
+        fixture.sheets.push({
+          id: 9000 + fixture.sheets.length,
+          name: LOG_SHEET_NAME,
+          values: [LOG_HEADERS.slice()],
+          hiddenByUser: [false],
+          hiddenByFilter: [false],
+        });
+      }
+      calls.logEntries.push(entry);
+    },
+    showLogSheet() {
+      return fixture.sheets.some((sheet) => sheet.name === LOG_SHEET_NAME);
+    },
+  };
+
+  const gmail = {
+    listDrafts() {
+      return fixture.gmail.drafts.map((draft) => ({ id: draft.id, subject: draft.subject, date: draft.date }));
+    },
+    getTemplate(draftId) {
+      const draft = findDraft(draftId);
+      if (!draft) {
+        throw new Error('Falso: no existe el borrador ' + draftId);
+      }
+      return {
+        id: draft.id,
+        subject: draft.subject,
+        plainBody: draft.plainBody,
+        htmlBody: draft.htmlBody,
+        attachments: draft.attachments.map((a) => ({ name: a.name, size: a.size, mimeType: a.mimeType, blob: a.blob })),
+        inlineImages: draft.inlineImages.map((image) => ({ name: image.name, blob: image.blob })),
+      };
+    },
+    getAliases() {
+      return fixture.gmail.aliases.slice();
+    },
+    send(message) {
+      if (matchesFailure(failOn.send, message)) {
+        calls.sequence.push({ type: 'send-failed', to: message.to });
+        throw new Error('Falso: Gmail lanzó una excepción');
+      }
+      calls.sent.push(message);
+      calls.sequence.push({ type: 'send', to: message.to });
+      if (typeof state.quota === 'number' && state.quota > 0) {
+        state.quota--;
+      }
+      if (typeof hooks.afterSend === 'function') {
+        hooks.afterSend(message);
+      }
+    },
+  };
+
+  const drive = {
+    getFileInfo(fileId) {
+      calls.driveCalls.push({ op: 'getFileInfo', id: fileId });
+      if (failOn.getFileInfo && failOn.getFileInfo.id === fileId) {
+        throw new Error('Falso: falla inyectada al leer el archivo');
+      }
+      const file = fixture.drive.files[fileId];
+      if (!file || file.noAccess) {
+        throw new Error('Falso: el archivo no existe o no hay acceso');
+      }
+      return { id: file.id, name: file.name, mimeType: file.mimeType, size: file.size, trashed: Boolean(file.trashed) };
+    },
+    getAttachment(fileInfo) {
+      calls.driveCalls.push({ op: 'getAttachment', id: fileInfo.id });
+      const file = fixture.drive.files[fileInfo.id];
+      if (!file || file.noAccess) {
+        throw new Error('Falso: el archivo no existe o no hay acceso');
+      }
+      if (EXPORTABLE.indexOf(file.mimeType) !== -1) {
+        return { name: file.name + '.pdf', mimeType: 'application/pdf', size: file.exportSize, blob: file.exportBlob };
+      }
+      if (String(file.mimeType).indexOf('application/vnd.google-apps.') === 0) {
+        throw new Error('Falso: tipo nativo no exportable');
+      }
+      return { name: file.name, mimeType: file.mimeType, size: file.size, blob: file.blob };
+    },
+  };
+
+  const lock = {
+    tryLock(ms) {
+      calls.lockCalls.push({ op: 'tryLock', ms });
+      return options.lockAvailable !== false;
+    },
+    release() {
+      calls.lockCalls.push({ op: 'release' });
+    },
+  };
+
+  const deps = {
+    sheets,
+    gmail,
+    drive,
+    lock,
+    quota: {
+      remaining() {
+        return state.quota;
+      },
+    },
+    session: {
+      userEmail() {
+        return options.userEmail === undefined ? fixture.account.userEmail : options.userEmail;
+      },
+    },
+    props: {
+      getConfig() {
+        return fixture.config ? { ...fixture.config } : null;
+      },
+      setConfig(config) {
+        calls.configWrites.push({ ...config });
+        fixture.config = { ...config };
+      },
+    },
+    clock: {
+      now() {
+        return typeof state.now === 'function' ? state.now() : state.now;
+      },
+    },
+    ids: {
+      newCampaignId() {
+        if (options.campaignId !== undefined) {
+          return options.campaignId;
+        }
+        state.campaignCounter++;
+        return 'camp' + String(state.campaignCounter).padStart(4, '0');
+      },
+    },
+  };
+
+  // Helpers de mutación sobre la pestaña de la campaña.
+  function headerIndex(header) {
+    const index = campaignSheet().values[0].indexOf(header);
+    if (index === -1) {
+      throw new Error('Falso: no existe el encabezado ' + header);
+    }
+    return index;
+  }
+
+  function setCell(rowNumber, header, value) {
+    const sheet = campaignSheet();
+    const column = headerIndex(header);
+    while (sheet.values.length < rowNumber) {
+      sheet.values.push(sheet.values[0].map(() => ''));
+      sheet.hiddenByUser.push(false);
+      sheet.hiddenByFilter.push(false);
+    }
+    sheet.values[rowNumber - 1][column] = value;
+  }
+
+  function insertRowAbove(rowNumber, values) {
+    const sheet = campaignSheet();
+    sheet.values.splice(rowNumber - 1, 0, values.slice());
+    sheet.hiddenByUser.splice(rowNumber - 1, 0, false);
+    sheet.hiddenByFilter.splice(rowNumber - 1, 0, false);
+  }
+
+  function appendRow(values) {
+    insertRowAbove(campaignSheet().values.length + 1, values);
+    return campaignSheet().values.length;
+  }
+
+  function swapRows(a, b) {
+    const sheet = campaignSheet();
+    for (const list of [sheet.values, sheet.hiddenByUser, sheet.hiddenByFilter]) {
+      const tmp = list[a - 1];
+      list[a - 1] = list[b - 1];
+      list[b - 1] = tmp;
+    }
+  }
+
+  function setTemplate(patch) {
+    const draft = findDraft(fixture.config.draftId);
+    if (!draft) {
+      throw new Error('Falso: no existe el borrador configurado');
+    }
+    Object.assign(draft, patch);
+  }
+
+  function getCell(rowNumber, header) {
+    const row = campaignSheet().values[rowNumber - 1] || [];
+    return row[headerIndex(header)];
+  }
+
+  return {
+    deps,
+    calls,
+    fixture,
+    setCell,
+    getCell,
+    insertRowAbove,
+    appendRow,
+    swapRows,
+    setTemplate,
+    setNow(value) {
+      state.now = value;
+    },
+    setQuota(value) {
+      state.quota = value;
+    },
+  };
+}
+
+module.exports = { createFakeDeps };
