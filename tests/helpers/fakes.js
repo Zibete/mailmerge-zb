@@ -94,6 +94,13 @@ function createFakeDeps(fixture, options = {}) {
     return true;
   }
 
+  // Valor mostrado de una celda, como `getDisplayValues()`: los dos
+  // adaptadores de lectura (`readSheet` y `readRow`) devuelven texto, así que
+  // una `Date` escrita por `writeCells` en `Fecha` se lee igual en ambos.
+  function displayValue(value) {
+    return value === undefined || value === null ? '' : String(value);
+  }
+
   const sheets = {
     listSheets() {
       return fixture.sheets.map((sheet) => ({ id: sheet.id, name: sheet.name }));
@@ -103,7 +110,7 @@ function createFakeDeps(fixture, options = {}) {
       return {
         id: sheet.id,
         name: sheet.name,
-        values: sheet.values.map((row) => row.slice()),
+        values: sheet.values.map((row) => row.map(displayValue)),
         hiddenByUser: sheet.values.map((row, i) => Boolean(sheet.hiddenByUser[i])),
         hiddenByFilter: sheet.values.map((row, i) => Boolean(sheet.hiddenByFilter[i])),
       };
@@ -116,7 +123,7 @@ function createFakeDeps(fixture, options = {}) {
       const row = sheet.values[rowNumber - 1] || [];
       const out = [];
       for (let i = 0; i < width; i++) {
-        out.push(row[i] === undefined || row[i] === null ? '' : String(row[i]));
+        out.push(displayValue(row[i]));
       }
       return out;
     },

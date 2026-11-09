@@ -1,8 +1,8 @@
 /**
  * Armado de mensajes y motor de envío. `executeConfirmed_` (V2) ejecuta una
- * confirmación por token preparada con `prepareConfirmation_` y escribe las
- * columnas gestionadas (D-37); devuelve una `SendResultView`
- * (`buildSendResultView_`).
+ * confirmación por token preparada con `prepareConfirmation_` (envío real o
+ * prueba, D-40), escribe las columnas gestionadas (D-37), publica el progreso
+ * por fila (D-29) y devuelve una `SendResultView` (`buildSendResultView_`).
  *
  * Transitorio: el envío de prueba V1 (`runTestSend_`), el envío real en dos
  * fases V1 (`prepareSend_`, `executeSend_`), el registro (`appendLogSafe_`) y
@@ -243,7 +243,16 @@ const SEND_TEXT_ = {
     'La configuración de la campaña cambió después de la confirmación; no se envió nada. Volvé a validar y confirmar',
   CLAIM: 'Envío iniciado; si Resultado sigue en ENVIANDO, revisá la carpeta Enviados',
   META_CHANGED: 'Fecha, Campaña o Detalle cambiaron después de la confirmación; la fila no se modificó',
+  TEST_ACCOUNT: 'La cuenta que ejecuta no es la de la prueba; no se envió nada',
 };
+
+// `Detalle` de éxito de la prueba (D-40), con la cuenta saneada.
+function testSentDetail_(account) {
+  return (
+    'PRUEBA enviada a tu cuenta (' + sanitizeHeaderValue_(account) + '); el destinatario real no recibió este ' +
+    'correo. Para enviárselo, borrá ' + HEADERS.RESULT
+  );
+}
 
 // Resultados del registro que no son estados de la hoja.
 const SEND_LOG_RESULT_ = { SKIPPED: 'OMITIDA', NOT_SENT: 'NO ENVIADA' };
@@ -554,7 +563,9 @@ function sameConfirmedConfig_(config, confirmed) {
  *    reemplazar, exige `overwriteConsent === true` (D-47).
  * 4. La configuración vigente tiene que ser la confirmada (D-43) y la
  *    validación al momento del envío no puede tener errores globales ni otra
- *    plantilla (D-15): si no, cancelación total.
+ *    plantilla (D-15); en la prueba, la cuenta que ejecuta tiene que ser
+ *    `snapshot.testTo` (D-40): si no, cancelación total. Después publica el
+ *    progreso inicial (`EN_CURSO`, D-29).
  * 5. Por fila confirmada, en orden ascendente: corte por tiempo y por cuota;
  *    la fila tiene que seguir válida con el mismo digest, también en la
  *    relectura; la huella de metadatos de la relectura tiene que coincidir
@@ -562,12 +573,20 @@ function sameConfirmedConfig_(config, confirmed) {
  *    `Resultado = ENVIANDO`); Gmail; verificación de que la fila sigue en su
  *    lugar; éxito (`Detalle`, `Resultado = Email Sent`). Las escrituras siguen
  *    D-37: una fila omitida, un claim fallido o una fila desplazada no escriben
- *    nada, y cualquier resultado ambiguo detiene la ejecución (D-16).
+ *    nada, y cualquier resultado ambiguo detiene la ejecución (D-16). En la
+ *    prueba, el mensaje va a `snapshot.testTo` con `TEST_SUBJECT_PREFIX` y el
+ *    `Detalle` de éxito es el de D-40. Publica el progreso después de cada
+ *    fila procesada.
+ * 6. Al terminar (también por corte de tiempo o cuota o por una detención),
+ *    publica el registro final `TERMINADO`. Un rechazo previo (token, lock,
+ *    toma, consentimiento, configuración, plantilla o cuenta de la prueba) no
+ *    publica nada. La publicación nunca afecta el envío y la `SendResultView`
+ *    trae todas las filas aunque la copia publicada se recorte.
  *
  * `ok` es `true` si la ejecución pasó las verificaciones globales (aunque
  * después se haya detenido); `false` si no se envió nada por un rechazo previo.
- * Transitorio: solo admite `kind === 'send'`; cualquier otro tipo devuelve
- * `ok: false` sin lock ni caché.
+ * Un `kind` distinto de `'send'` y `'test'` devuelve `ok: false` sin lock ni
+ * caché.
  */
 function executeConfirmed_(deps, token, kind, overwriteConsent) {
   const startedAt = deps.clock.now();
@@ -581,15 +600,21 @@ function executeConfirmed_(deps, token, kind, overwriteConsent) {
     stoppedReason: '',
   };
 
+  // Un rechazo previo (`ok: false`) no publica progreso; una ejecución que
+  // pasó las verificaciones globales publica el registro final aunque se
+  // haya detenido (D-29).
   function finish(reason) {
     if (reason) {
       result.stoppedReason = reason;
     }
     result.state = 'TERMINADO';
+    if (result.ok) {
+      publishProgress_(deps, token, result);
+    }
     return buildSendResultView_(result);
   }
 
-  if (kind !== 'send') {
+  if (kind !== 'send' && kind !== 'test') {
     return finish(SEND_TEXT_.UNKNOWN_KIND);
   }
   if (!isValidToken_(token)) {
@@ -644,11 +669,18 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
     result.stoppedReason = SEND_TEXT_.TEMPLATE_CHANGED;
     return;
   }
+  // Prueba (D-40, D-06): solo a la cuenta que ejecuta.
+  const isTest = kind === 'test';
+  if (isTest && String(deps.session.userEmail() || '') !== snapshot.testTo) {
+    result.stoppedReason = SEND_TEXT_.TEST_ACCOUNT;
+    return;
+  }
 
   result.ok = true;
   const counts = result.counts;
   counts.total = snapshot.rows.length;
   counts.pending = counts.total;
+  publishProgress_(deps, token, result);
 
   const sheetId = report.sheet.id;
   const columns = report.headers.columns;
@@ -658,6 +690,18 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
   });
   let quota = report.quotaRemaining;
 
+  // Destinatario de la fila para la `SendResultView`: en la prueba, la cuenta
+  // propia; en el envío real, la dirección confirmada o `''` si la fila
+  // cambió y no se conoce.
+  function recipientOf(row) {
+    if (isTest) {
+      return snapshot.testTo;
+    }
+    return row ? row.email : '';
+  }
+
+  // Registra el resultado de una fila y publica el progreso (D-29): una vez
+  // por fila procesada, incluidas las omitidas y la que detiene la ejecución.
   function record(rowNumber, recipient, rowResult, detail) {
     result.rows.push({
       rowNumber: rowNumber,
@@ -672,6 +716,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
       counts.review++;
     }
     counts.pending = counts.total - counts.processed;
+    publishProgress_(deps, token, result);
   }
 
   function write(rowNumber, cells) {
@@ -700,7 +745,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
     // La fila tiene que seguir válida y con el mismo digest (AC-23 a AC-25).
     const row = current[rowNumber];
     if (!row || deps.crypto.sha256Hex(row.key) !== digest) {
-      record(rowNumber, '', SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
+      record(rowNumber, recipientOf(null), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
       continue;
     }
 
@@ -708,21 +753,28 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
     // (D-48), antes de armar el mensaje y del claim; sin escrituras.
     const live = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
     if (!live || deps.crypto.sha256Hex(rowKey_(live, columns)) !== digest) {
-      record(rowNumber, row.email, SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
       continue;
     }
     if (deps.crypto.sha256Hex(metaKey_(live, columns)) !== metaDigest) {
-      record(rowNumber, row.email, SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.META_CHANGED);
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.META_CHANGED);
       continue;
     }
 
-    // Armado completo, adjuntos incluidos, antes del claim.
+    // Armado completo, adjuntos incluidos, antes del claim. En la prueba solo
+    // cambian el destinatario (la cuenta propia) y el prefijo del asunto
+    // (AC-15, D-40).
     const built = buildMessage_(deps, report.templateData, { rowNumber: rowNumber, values: row.values }, report.headers, config);
     if (!built.ok) {
-      record(rowNumber, row.email, SEND_LOG_RESULT_.SKIPPED, built.errors.map(sanitizeHeaderValue_).join('; '));
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, built.errors.map(sanitizeHeaderValue_).join('; '));
       continue;
     }
+    if (isTest) {
+      built.message.to = snapshot.testTo;
+      built.message.subject = TEST_SUBJECT_PREFIX + built.message.subject;
+    }
     const recipient = built.message.to;
+    const successDetail = isTest ? sendDetailText_(testSentDetail_(snapshot.testTo)) : SEND_TEXT_.ACCEPTED;
 
     // Claim (D-37): `Resultado = ENVIANDO` último.
     try {
@@ -799,7 +851,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
     // falla, la fila queda ENVIANDO (AC-20).
     try {
       write(rowNumber, [
-        { column: columns.detail, value: SEND_TEXT_.ACCEPTED },
+        { column: columns.detail, value: successDetail },
         { column: columns.result, value: STATUS.SENT },
       ]);
     } catch (e) {
@@ -812,7 +864,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
       result.stoppedReason = 'No se pudo registrar un envío en la hoja; la ejecución se detuvo';
       break;
     }
-    record(rowNumber, recipient, STATUS.SENT, SEND_TEXT_.ACCEPTED);
+    record(rowNumber, recipient, STATUS.SENT, successDetail);
   }
 }
 

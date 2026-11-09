@@ -18,6 +18,7 @@ const META_CHANGED = 'Fecha, Campaña o Detalle cambiaron después de la confirm
 const CLAIM_DETAIL = 'Envío iniciado; si Resultado sigue en ENVIANDO, revisá la carpeta Enviados';
 const ACCEPTED = 'Aceptado por Gmail';
 const CONF_PREFIX = 'MM_CONF_';
+const PROG_PREFIX = 'MM_PROG_';
 const FIRST_TOKEN = '00000000-0000-4000-8000-000000000001';
 const UNKNOWN_TOKEN = '11111111-1111-4111-8111-111111111111';
 const DEFAULT_NOW = Date.UTC(2026, 10, 9, 12, 0, 0);
@@ -124,17 +125,24 @@ test('Camino feliz: consumo del token y por fila claim ENVIANDO → send → Ema
     { rowNumber: 4, recipient: EMAILS[4], result: 'Email Sent', detail: ACCEPTED },
   ]);
 
+  // El progreso (D-29) se publica al empezar, después de cada fila y al final.
+  const progress = { type: 'cachePut', key: PROG_PREFIX + FIRST_TOKEN };
   assert.deepEqual(summarize(plain(fake.calls.sequence.slice(start))), [
     { type: 'cacheRemove', key: CONF_PREFIX + FIRST_TOKEN },
+    progress,
     { type: 'writeCells', rowNumber: 2, result: 'ENVIANDO' },
     { type: 'send', to: EMAILS[2] },
     { type: 'writeCells', rowNumber: 2, result: 'Email Sent' },
+    progress,
     { type: 'writeCells', rowNumber: 3, result: 'ENVIANDO' },
     { type: 'send', to: EMAILS[3] },
     { type: 'writeCells', rowNumber: 3, result: 'Email Sent' },
+    progress,
     { type: 'writeCells', rowNumber: 4, result: 'ENVIANDO' },
     { type: 'send', to: EMAILS[4] },
     { type: 'writeCells', rowNumber: 4, result: 'Email Sent' },
+    progress,
+    progress,
   ]);
   assert.deepEqual(plain(fake.calls.lockCalls), [{ op: 'tryLock', ms: 10000 }, { op: 'release' }]);
   for (const row of [2, 3, 4]) {
@@ -850,4 +858,207 @@ test('D-13: buildSendResultView_ informa omitidas, revisión y corte sin decir "
   assert.ok(!sanitized.rows[0].detail.includes('\n'));
   assert.ok(!sanitized.campaign.includes('\n'));
   assert.ok(sanitized.summaryLines.every((line) => !line.includes('\n')));
+});
+
+// Registros de progreso publicados en `MM_PROG_<token>`, en orden.
+function progressRecords(fake, token) {
+  return fake.calls.cachePuts.filter((put) => put.key === PROG_PREFIX + token).map((put) => JSON.parse(put.value));
+}
+
+function progressPuts(fake) {
+  return fake.calls.cachePuts.filter((put) => put.key.startsWith(PROG_PREFIX));
+}
+
+function withoutRecipient(rows) {
+  return rows.map((row) => ({ rowNumber: row.rowNumber, result: row.result, detail: row.detail }));
+}
+
+test('AC-38 / D-29: progreso inicial, uno por fila y final TERMINADO que coincide con la vista devuelta', () => {
+  const { ctx, fake } = setup();
+  const { prep, result } = runSend(ctx, fake);
+
+  const puts = progressPuts(fake);
+  assert.equal(puts.length, 5);
+  assert.ok(puts.every((put) => put.key === PROG_PREFIX + prep.token && put.ttlSeconds === 1800));
+  const records = progressRecords(fake, prep.token);
+  assert.deepEqual(records.map((record) => record.state), ['EN_CURSO', 'EN_CURSO', 'EN_CURSO', 'EN_CURSO', 'TERMINADO']);
+  assert.deepEqual(records.map((record) => record.counts.processed), [0, 1, 2, 3, 3]);
+  assert.deepEqual(records.map((record) => record.rows.length), [0, 1, 2, 3, 3]);
+  records.forEach((record) => {
+    assert.equal(record.kind, 'send');
+    assert.equal(record.campaign, result.campaign);
+    assert.equal(record.counts.total, 3);
+    assert.equal(record.counts.pending, 3 - record.counts.processed);
+    assert.equal(record.rowsTruncated, false);
+  });
+
+  const last = records[records.length - 1];
+  assert.deepEqual(last.counts, result.counts);
+  assert.deepEqual(last.rows, withoutRecipient(result.rows));
+  assert.equal(last.stoppedReason, result.stoppedReason);
+  const read = plain(ctx.readProgress_(fake.deps, prep.token));
+  assert.equal(read.found, true);
+  assert.deepEqual(read.progress, last);
+});
+
+test('AC-38 / D-29: un rechazo previo (token, lock, consentimiento, configuración o plantilla) no publica progreso', () => {
+  const cases = {
+    'token inválido': (ctx, fake) => plain(ctx.executeConfirmed_(fake.deps, 'abc', 'send')),
+    'sin lock': (ctx, fake) => {
+      const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
+      const locked = createFakeDeps(fake.fixture, { lockAvailable: false });
+      const result = plain(ctx.executeConfirmed_(locked.deps, prep.token, 'send'));
+      assert.equal(progressPuts(locked).length, 0);
+      return result;
+    },
+    consentimiento: (ctx, fake) => {
+      fake.setCell(3, 'Campaña', 'Anterior');
+      return runSend(ctx, fake).result;
+    },
+    configuración: (ctx, fake) =>
+      runSend(ctx, fake, () => {
+        fake.fixture.config.campaignName = 'Otra campaña';
+      }).result,
+    plantilla: (ctx, fake) => runSend(ctx, fake, () => fake.setTemplate({ subject: 'Otro {{Reference}}' })).result,
+  };
+  for (const name of Object.keys(cases)) {
+    const { ctx, fake } = setup();
+    const result = cases[name](ctx, fake);
+    assert.equal(result.ok, false, name);
+    assert.equal(fake.calls.sent.length, 0, name);
+    assert.equal(progressPuts(fake).length, 0, name);
+  }
+});
+
+test('AC-38 / D-29: una falla al publicar el progreso no cambia envíos, escrituras ni resultado', () => {
+  const base = setup();
+  const baseRun = runSend(base.ctx, base.fake);
+  const failing = setup({ failOn: { cachePut: (key) => key.startsWith(PROG_PREFIX) } });
+  const failRun = runSend(failing.ctx, failing.fake);
+
+  assert.equal(failRun.prep.ok, true);
+  assert.equal(failing.fake.calls.sent.length, 3);
+  assert.deepEqual(plain(failing.fake.calls.sent), plain(base.fake.calls.sent));
+  assert.deepEqual(plain(failing.fake.calls.cellWrites), plain(base.fake.calls.cellWrites));
+  assert.deepEqual(failRun.result, baseRun.result);
+  assert.equal(progressPuts(failing.fake).length, 0);
+  assert.equal(failing.fake.calls.sequence.filter((step) => step.type === 'cachePut-failed').length, 5);
+});
+
+test('AC-38 / D-29: con detalles largos y MAX_CACHE_VALUE_BYTES reducido cada publicación entra en el límite y la vista trae todas las filas', () => {
+  const { ctx, fixture, fake } = setup();
+  // Seis PDFs por fila; al ejecutar, Drive no entrega ninguno: cada fila se
+  // omite con un detalle largo (seis errores, recortado a MAX_DETAIL_CHARS).
+  for (const rowNumber of [2, 3, 4]) {
+    const links = [];
+    for (let i = 1; i <= 6; i++) {
+      const id = 'fakeLongDetail' + rowNumber + String(i).padStart(9, '0');
+      fixture.drive.files[id] = {
+        id,
+        name: 'f' + rowNumber + '-' + i + '.pdf',
+        mimeType: 'application/pdf',
+        size: 10,
+        trashed: false,
+        noAccess: false,
+        blob: { fakeBlob: id },
+      };
+      links.push(fileLink(id));
+    }
+    fake.setCell(rowNumber, 'File Attachments', links.join(', '));
+  }
+  const limit = 600;
+  const { prep, result } = runSend(ctx, fake, () => {
+    getConst(ctx, 'LIMITS').MAX_CACHE_VALUE_BYTES = limit;
+    fake.deps.drive.getAttachment = () => {
+      throw new Error('sin acceso');
+    };
+  });
+
+  assert.equal(prep.ok, true, JSON.stringify(prep.errors));
+  assert.equal(fake.calls.sent.length, 0);
+  assert.deepEqual(resultsByRow(result), [
+    [2, 'OMITIDA'],
+    [3, 'OMITIDA'],
+    [4, 'OMITIDA'],
+  ]);
+  result.rows.forEach((row) => assert.ok(row.detail.length > 250, row.detail));
+  assert.deepEqual(result.counts, { total: 3, processed: 3, sent: 0, skipped: 3, review: 0, pending: 0 });
+
+  const puts = progressPuts(fake);
+  assert.equal(puts.length, 5);
+  puts.forEach((put) => assert.ok(Buffer.byteLength(put.value, 'utf8') <= limit, String(Buffer.byteLength(put.value))));
+  const last = progressRecords(fake, prep.token).pop();
+  assert.equal(last.state, 'TERMINADO');
+  assert.equal(last.rowsTruncated, true);
+  assert.deepEqual(last.counts, result.counts);
+  assert.ok(last.rows.length >= 1 && last.rows.length < 3, String(last.rows.length));
+  assert.equal(last.rows[last.rows.length - 1].rowNumber, 4);
+});
+
+test('AC-38 / D-29: una ejecución detenida por Gmail o por cuota publica el registro final TERMINADO con stoppedReason', () => {
+  const stopped = setup({ failOn: { send: true } });
+  const run = runSend(stopped.ctx, stopped.fake);
+  const records = progressRecords(stopped.fake, run.prep.token);
+  assert.equal(records.length, 3);
+  const last = records[2];
+  assert.equal(last.state, 'TERMINADO');
+  assert.notEqual(last.stoppedReason, '');
+  assert.equal(last.stoppedReason, run.result.stoppedReason);
+  assert.deepEqual(last.counts, run.result.counts);
+  assert.deepEqual(last.rows.map((row) => [row.rowNumber, row.result]), [[2, 'REVISAR']]);
+
+  const quota = setup({ quota: 1 });
+  const quotaRun = runSend(quota.ctx, quota.fake);
+  const quotaRecords = progressRecords(quota.fake, quotaRun.prep.token);
+  assert.equal(quotaRecords.length, 3);
+  const quotaLast = quotaRecords[2];
+  assert.equal(quotaLast.state, 'TERMINADO');
+  assert.equal(quotaLast.stoppedReason, quotaRun.result.stoppedReason);
+  assert.notEqual(quotaLast.stoppedReason, '');
+  assert.deepEqual(quotaLast.counts, { total: 3, processed: 1, sent: 1, skipped: 0, review: 0, pending: 2 });
+});
+
+test('D-46: el progreso publicado no contiene direcciones ni recipient; la SendResultView sí', () => {
+  const runs = [];
+
+  const happy = setup();
+  runs.push({ fake: happy.fake, ...runSend(happy.ctx, happy.fake) });
+
+  // Gmail lanza con un mensaje que cita la dirección de la fila 3.
+  const failing = setup();
+  const originalSend = failing.fake.deps.gmail.send;
+  failing.fake.deps.gmail.send = (message) => {
+    if (message.to === EMAILS[3]) {
+      throw new Error('Destinatario rechazado: ' + EMAILS[3]);
+    }
+    return originalSend(message);
+  };
+  runs.push({ fake: failing.fake, ...runSend(failing.ctx, failing.fake) });
+
+  // Prueba: su Detalle nombra la cuenta que ejecuta.
+  const trial = setup();
+  const trialPrep = plain(trial.ctx.prepareConfirmation_(trial.fake.deps, 'test', 2));
+  const trialResult = plain(trial.ctx.executeConfirmed_(trial.fake.deps, trialPrep.token, 'test'));
+  runs.push({ fake: trial.fake, prep: trialPrep, result: trialResult });
+
+  runs.forEach((run, index) => {
+    const puts = progressPuts(run.fake);
+    assert.ok(puts.length > 0, 'ejecución ' + index);
+    puts.forEach((put) => {
+      assert.ok(!put.value.includes('@example.test'), put.value);
+      assert.ok(!put.value.includes('"recipient"'), put.value);
+    });
+    assert.ok(run.result.rows.length > 0);
+    run.result.rows.forEach((row) => assert.match(row.recipient, /@example\.test$/));
+  });
+
+  const failedRow = runs[1].result.rows.find((row) => row.rowNumber === 3);
+  assert.equal(failedRow.result, 'REVISAR');
+  assert.ok(failedRow.detail.includes(EMAILS[3]), failedRow.detail);
+  const failedProgress = progressRecords(failing.fake, runs[1].prep.token).pop();
+  assert.ok(failedProgress.rows.find((row) => row.rowNumber === 3).detail.includes('[dirección]'));
+
+  assert.equal(runs[2].result.rows[0].recipient, 'operator@example.test');
+  assert.ok(runs[2].result.rows[0].detail.includes('operator@example.test'));
+  assert.ok(progressRecords(trial.fake, trialPrep.token).pop().rows[0].detail.includes('[dirección]'));
 });
