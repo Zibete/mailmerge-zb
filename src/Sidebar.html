@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; color: #202124; }
+      label { display: block; margin-top: 12px; font-weight: bold; }
+      select, input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 4px; }
+      .hint { margin: 4px 0 0; color: #5f6368; font-size: 12px; }
+      .buttons { margin-top: 16px; }
+      button { margin-right: 8px; padding: 6px 12px; }
+      #message { margin-top: 12px; white-space: pre-wrap; }
+      #message.error { color: #b3261e; }
+      #message.ok { color: #137333; }
+    </style>
+  </head>
+  <body>
+    <form id="config-form" novalidate>
+      <label for="sheet">Pestaña de la campaña</label>
+      <select id="sheet" required></select>
+
+      <label for="draft">Borrador de Gmail (plantilla)</label>
+      <select id="draft" required></select>
+
+      <label for="from">Remitente</label>
+      <select id="from" required></select>
+      <p class="hint">Tu cuenta o uno de tus alias de Gmail.</p>
+
+      <label for="reply-to">Reply-To (opcional)</label>
+      <input id="reply-to" type="text" autocomplete="off" spellcheck="false">
+      <p class="hint">Una sola dirección. Dejalo vacío para responder al remitente.</p>
+
+      <div class="buttons">
+        <button type="submit" id="save">Guardar</button>
+        <button type="button" id="close">Cerrar</button>
+      </div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </form>
+
+    <script>
+      // Todo dato del servidor se inserta como texto (`textContent`,
+      // `new Option`), nunca como HTML.
+      var form = document.getElementById('config-form');
+      var sheetSelect = document.getElementById('sheet');
+      var draftSelect = document.getElementById('draft');
+      var fromSelect = document.getElementById('from');
+      var replyToInput = document.getElementById('reply-to');
+      var saveButton = document.getElementById('save');
+      var closeButton = document.getElementById('close');
+      var messageBox = document.getElementById('message');
+
+      function showMessage(text, kind) {
+        messageBox.textContent = text;
+        messageBox.className = kind || '';
+      }
+
+      function setBusy(busy) {
+        saveButton.disabled = busy;
+        sheetSelect.disabled = busy;
+        draftSelect.disabled = busy;
+        fromSelect.disabled = busy;
+        replyToInput.disabled = busy;
+      }
+
+      // Rellena un select con una opción vacía inicial y preselecciona
+      // `currentValue` si está entre las opciones.
+      function fillSelect(select, items, currentValue) {
+        while (select.firstChild) {
+          select.removeChild(select.firstChild);
+        }
+        select.add(new Option('Elegí una opción…', ''));
+        var found = false;
+        items.forEach(function (item) {
+          select.add(new Option(item.text, item.value));
+          if (currentValue !== null && currentValue !== undefined && item.value === String(currentValue)) {
+            found = true;
+          }
+        });
+        select.value = found ? String(currentValue) : '';
+      }
+
+      function formatDate(text) {
+        var date = new Date(text);
+        return isNaN(date.getTime()) ? String(text || '') : date.toLocaleString();
+      }
+
+      function failureMessage(error) {
+        return (error && error.message) ? error.message : String(error);
+      }
+
+      function onOptionsLoaded(options) {
+        var current = options.current || {};
+        fillSelect(sheetSelect, options.sheets.map(function (sheet) {
+          return { value: String(sheet.id), text: sheet.name };
+        }), current.sheetId);
+        fillSelect(draftSelect, options.drafts.map(function (draft) {
+          return { value: draft.id, text: (draft.subject || '(sin asunto)') + ' — ' + formatDate(draft.date) };
+        }), current.draftId);
+        fillSelect(fromSelect, options.senders.map(function (sender) {
+          return { value: sender, text: sender };
+        }), current.from);
+        replyToInput.value = current.replyTo || '';
+        setBusy(false);
+        if (options.drafts.length === 0) {
+          showMessage('No hay borradores en tu cuenta de Gmail. Creá uno y volvé a abrir la configuración.', 'error');
+        } else {
+          showMessage('', '');
+        }
+      }
+
+      function onFailure(error) {
+        setBusy(false);
+        showMessage(failureMessage(error), 'error');
+      }
+
+      function loadOptions() {
+        setBusy(true);
+        showMessage('Cargando opciones…', '');
+        google.script.run
+          .withSuccessHandler(onOptionsLoaded)
+          .withFailureHandler(onFailure)
+          .getConfigOptions();
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        if (!sheetSelect.value || !draftSelect.value || !fromSelect.value) {
+          showMessage('Elegí la pestaña, el borrador y el remitente.', 'error');
+          return;
+        }
+        setBusy(true);
+        showMessage('Guardando…', '');
+        google.script.run
+          .withSuccessHandler(function () {
+            setBusy(false);
+            showMessage('Configuración guardada. Usá "Validar" antes de enviar.', 'ok');
+          })
+          .withFailureHandler(onFailure)
+          .saveConfig({
+            sheetId: sheetSelect.value,
+            draftId: draftSelect.value,
+            from: fromSelect.value,
+            replyTo: replyToInput.value.trim()
+          });
+      });
+
+      closeButton.addEventListener('click', function () {
+        google.script.host.close();
+      });
+
+      loadOptions();
+    </script>
+  </body>
+</html>
