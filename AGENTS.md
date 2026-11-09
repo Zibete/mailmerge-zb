@@ -1,37 +1,63 @@
-# Engineering contract — local Mail Merge
+# Contrato de ingeniería — Mail Merge V1
 
-## Objective and scope
-- Build a **small** Google Sheets + Gmail + Drive mail merge, using Apps Script V8. Replace the essential workflow of an existing paid add-on; do not create a marketing platform.
-- Source of truth: `docs/PRODUCT.md`, `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md`. `docs/REFERENCE_AUDIT.md` is research, not copy-paste production code.
-- Prefer native Google capabilities and the smallest implementation that meets the acceptance criteria. No independent web app, server, database, CRM integration, analytics pixels, AI runtime or elaborate framework.
+Fuente principal de las reglas de ingeniería del proyecto, para cualquier agente o persona que lo modifique.
 
-## Local-only boundary (mandatory)
-- **All code, tests, specifications and Git activity stay on the local machine.** Local `git init`, branches and small, descriptive local commits are allowed. Do not add a Git remote, push, create a PR, publish or release.
-- Do not run `clasp login`, `clasp create`, `clasp push`, `clasp deploy`, `clasp run`, OAuth flows, or any write/send call against a Google account. `clasp` may be described for a future manual activation, not used now.
-- Public documentation/repository browsing for *read-only research* is allowed; no uploading project files or business data to third-party services. Do not change external resources.
-- No live mail, even a test email, and no real customer accounts, addresses, attachment contents or credentials. Use synthetic fixtures and service mocks.
-- A passing local test suite is **not** proof of Google-hosted integration or production readiness. Label unavailable checks `PENDING LIVE VALIDATION`.
+## Estado del proyecto
 
-## Workflow: spec-driven-dev
-1. Start with `git status --short`, inspect existing files and the installed **spec-driven-dev** skill(s) and their exact instructions. Do not assume skill names, commands or output paths.
-2. Read `docs/PRODUCT.md`, `docs/REFERENCE_AUDIT.md`, `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md`, `docs/DECISIONS.md` before implementing.
-3. Use the installed skill to produce/refine the canonical requirement/design/task artifacts. Keep preliminary source docs as inputs; do not generate duplicate parallel specifications if the skill already provides them.
-4. Identify any genuine blocking ambiguity. Choose a documented conservative default for non-blocking matters. Record decisions in the skill's decision artifact or `docs/DECISIONS.md`.
-5. Implement in small vertical increments, ideally **test → minimal code → test → review diff → local commit**. Only change tests when requirements changed or the test itself is proven wrong.
-6. At each checkpoint: run targeted checks, `git diff --check`, inspect `git diff`, and explain tested vs untested. Keep commits scoped to one behavior or fix.
-7. Finish with local commands, test results, acceptance coverage, blocked live checks, remaining risks and a clean/understood `git status`.
+- **V1 implementada y verificada localmente (`LOCAL_VERIFIED`)**: código en `src/`, tests offline en `tests/`, plan ejecutado en `plans/2026-11-08_mail-merge-v1.md`.
+- **Aún no validada contra Google (`PENDING LIVE VALIDATION`)**: no se instaló, autorizó ni ejecutó en Apps Script, Gmail ni Drive. No declarar `LIVE_VERIFIED` sin resultados reales de los controles de `docs/OPERATIONS.md`.
+- No repetir el plan inicial. El trabajo posterior es mantenimiento, auditoría, correcciones y preparación de un piloto controlado.
+- Para el resultado actual de los tests, ejecutar la suite; `docs/ACCEPTANCE_STATUS.md` registra la evidencia del cierre de V1.
 
-## Code and security invariants
-- No send without explicit operator selection, validation, review and confirmation. Development remains mock-only.
-- A missing/inaccessible attachment, unresolved placeholder, invalid recipient, unauthorized alias or stale changed row **blocks** that email. Never silently omit an expected attachment.
-- Respect `Email Address`, `File Attachments`, `Mail Merge Status`, `SKIP`, pre-existing sent statuses and hidden/filtered rows. Only an **empty** status is newly eligible unless a documented explicit human action changes it.
-- Re-read/revalidate the selected row at send-time; never rely on an active sheet tab or an old preview alone. Validate recipient and attachment identity before use.
-- Use a lock and per-row pre-send checkpoint. A crash between Gmail send and status persistence is **ambiguous**, not safely retryable: mark/leave it for manual review. Do not promise exactly-once or delivery confirmation.
-- Escape untrusted values in HTML, sanitize subject/header fields, validate Drive URLs/IDs, minimize OAuth scopes and logs, and never modify sharing permissions.
-- Separate deterministic logic from Google service access so the former can be tested offline with Node's built-in test runner and mock adapters. Add dependencies only when necessary and justified.
-- No new functionality, speculative abstraction, automated schedule, auto-response, click/open tracking or UI redesign outside the spec.
+## Idioma
 
-## Change safety
-- Preserve uncommitted work; no destructive `reset`, `clean`, `checkout`, force operations or overwrite. Do not edit files outside the project.
-- Keep secrets, local tokens, script IDs and private configuration out of Git. Review `git diff --cached` before each commit.
-- The finish line for this assignment is **locally implemented and locally verified**. Deployment, authorizations and live end-to-end acceptance remain explicitly deferred.
+Trabajo, documentación y comunicación en **español**: análisis, planes, documentación nueva o editada, interfaz, mensajes de error, comentarios del código y descripciones de commits. Se conservan sin traducir los identificadores técnicos (código, APIs, archivos, scopes, comandos, tipos de Conventional Commits) y los **literales de compatibilidad**: encabezados `Email Address`, `File Attachments`, `Mail Merge Status`, `Scheduled Date`; estados `SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR`; prefijo de prueba `[PRUEBA]` (reemplazan a `SENDING`, `REVIEW` y `[TEST]` de los insumos iniciales). Cambiar un literal requiere una modificación de contrato aprobada. Los documentos de investigación iniciales pueden quedar en inglés y no se traducen salvo pedido expreso.
+
+## Objetivo, alcance y fuentes
+
+- Mantener un mail merge **pequeño** sobre Google Sheets, borradores de Gmail, Drive y Apps Script V8: configurar campaña, validar, enviar una prueba, confirmar envíos pendientes y consultar el registro.
+- Sin servidores, aplicación web, bases de datos externas, CRM, tracking, automatización de marketing, programación de campañas, respuestas automáticas, rediseños de interfaz fuera de la especificación, reintentos automáticos de envíos dudosos, dependencias ni capas de arquitectura sin necesidad verificada.
+- Fuentes vigentes: `docs/PRODUCT.md` (producto), `plans/2026-11-08_mail-merge-v1.md` (diseño implementado), `docs/DECISIONS.md` (decisiones), `docs/OPERATIONS.md` (operación), `docs/ACCEPTANCE_STATUS.md` (verificación).
+- Insumos históricos, que no prevalecen sobre decisiones posteriores: `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md` y `docs/ENGINEERING_PLAYBOOK.md`. `docs/REFERENCE_AUDIT.md` es investigación, no código para copiar. `PROMPT_CLAUDE_CODE.md` es el pedido de arranque: no ejecutarlo.
+
+## Límite local y autorización (obligatorio)
+
+- **Git exclusivamente local**: ramas y commits locales; sin remotos, push, PR, publicaciones ni releases.
+- **Sin cuentas ni recursos reales de Google** por defecto: nada de `clasp login`/`push`/`deploy`/`run`, OAuth, envíos de correo (ni de prueba), cambios en Drive u otras acciones externas sin una **autorización explícita nueva** que delimite cuenta, hoja, destinatarios y acciones permitidas.
+- Lectura de documentación pública permitida. No subir archivos del proyecto, datos reales ni secretos a terceros, ni modificar recursos externos.
+- No editar archivos fuera del proyecto.
+- Tests solo con datos ficticios y adaptadores simulados. Sin credenciales, tokens, IDs privados de scripts ni datos de clientes en el repositorio o en los registros.
+
+## Invariantes de seguridad del código
+
+- No enviar sin selección de campaña, validación, revisión por fila y confirmación explícita del operador.
+- Un destinatario inválido, remitente no autorizado, marcador sin resolver o vacío, fila modificada o adjunto inaccesible o inválido **bloquea** ese envío. Nunca omitir en silencio un adjunto esperado.
+- Respetar filas ocultas o filtradas, `SKIP` y cualquier estado no vacío: solo las filas con estado vacío entran al envío normal.
+- La confirmación queda fuera del lock. Después de confirmar: tomar el lock, releer y revalidar cada fila, marcar `ENVIANDO` antes de llamar a Gmail y escribir `Email Sent` solo si Gmail aceptó el envío.
+- `ENVIANDO` y `REVISAR` requieren conciliación manual; una interrupción o error nunca habilita un reenvío automático. `Email Sent` no garantiza entrega.
+- Escapar valores en HTML, sanear cabeceras, validar enlaces, identidad y tamaño de adjuntos, neutralizar fórmulas en el registro y minimizar datos registrados y scopes OAuth. No modificar permisos de Drive.
+- Mantener la lógica determinista separada de los adaptadores de Google; los tests corren sin red ni credenciales.
+
+## Flujo de cambios (`spec-driven-dev`)
+
+1. Antes de modificar: leer este contrato, `git status --short`, el código afectado y la documentación pertinente.
+2. Clasificar el cambio. Las correcciones acotadas, los tests faltantes, los textos y la documentación van por `small-change`. Los cambios al flujo de envío, la elegibilidad, la máquina de estados, los adjuntos, los scopes o el manifest requieren un plan único en `plans/YYYY-MM-DD_<slug>.md` (`write-plan` / `implement-plan`), sin especificaciones paralelas. Seguir las instrucciones de la skill instalada; no inventar comandos.
+3. Defectos: reproducir primero con un test que falle, aplicar el cambio mínimo y correr la suite. No modificar tests solo para que pasen.
+4. Registrar en `docs/DECISIONS.md` las decisiones de alcance o de límite. Actualizar solo la documentación afectada (sobre todo `docs/OPERATIONS.md` y `docs/ACCEPTANCE_STATUS.md`).
+5. Avanzar con autonomía dentro del alcance y del límite local. Escalar solo lo que cambie el comportamiento prometido, el contrato de seguridad o el acceso externo.
+
+## Verificación
+
+Node.js v20.11.1 portable, sin dependencias ni `npm install`; los comandos están en `README.md` ("Verificación local").
+
+- Tests offline: `node --test` (archivos `*.test.js`). Los títulos de los tests conservan los IDs `R-xx`, `AC-xx` y `D-xx` para la trazabilidad con el plan y `docs/ACCEPTANCE_STATUS.md`.
+- Sintaxis: `node --check` sobre cada `.js` modificado.
+- Higiene: `git diff --check`, `git status --short` y `git remote -v` (vacío).
+
+Al cerrar un cambio, informar archivos y commits, resultados reales de los comandos, criterios cubiertos, riesgos y lo que queda separado en **comprobado localmente**, **pendiente en Google** y **no probado**.
+
+## Commits
+
+- Conventional Commits con descripción en español: `tipo(alcance): descripción`. Tipos: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`. Un comportamiento o corrección por commit; cuerpo opcional con el porqué.
+- Stage por nombre de archivo (nunca `git add -A` ni `git add .`); revisar `git diff --cached`; nunca `--no-verify`.
+- Preservar el trabajo sin commitear: sin `reset`, `clean`, `checkout` destructivos ni operaciones forzadas.
