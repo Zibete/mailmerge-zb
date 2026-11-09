@@ -317,7 +317,7 @@ function sendConfirmedRows_(deps, config, prepared, startedAt, result) {
   result.campaignId = deps.ids.newCampaignId();
 
   const sheetId = report.sheet.id;
-  const statusColumn = report.headers.columns.status;
+  const statusColumn = report.headers.columns.result;
   const current = {};
   report.valid.forEach(function (row) {
     current[row.rowNumber] = row;
@@ -380,7 +380,7 @@ function sendConfirmedRows_(deps, config, prepared, startedAt, result) {
 
     // Paso 4: relectura de la fila (ediciones durante el recorrido).
     const live = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
-    if (!live || rowKey_(live) !== confirmedKey) {
+    if (!live || rowKey_(live, report.headers.columns) !== confirmedKey) {
       skip(rowNumber, confirmedEmail, SEND_TEXT_.CHANGED);
       continue;
     }
@@ -431,7 +431,7 @@ function sendConfirmedRows_(deps, config, prepared, startedAt, result) {
     const expected = row.values.slice();
     expected[statusColumn] = STATUS.SENDING;
     const after = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
-    if (!after || rowKey_(after) !== rowKey_(expected)) {
+    if (!after || rowKey_(after, report.headers.columns) !== rowKey_(expected, report.headers.columns)) {
       result.review.push({
         rowNumber: rowNumber,
         reason:

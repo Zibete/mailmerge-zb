@@ -223,7 +223,7 @@ test('AC-17: runSendPending_ con confirm falso no envía ni escribe estado', () 
   assert.equal(ui.confirms.length, 1);
   assertNoEffects(fake);
   assert.equal(fake.calls.lockCalls.length, 0);
-  assert.equal(fake.getCell(2, 'Mail Merge Status'), '');
+  assert.equal(fake.getCell(2, 'Resultado'), '');
 });
 
 test('AC-17 / D-23: el texto de confirm tiene la advertencia, la cantidad de filas y la revisión por fila', () => {
@@ -256,7 +256,7 @@ test('AC-17: runSendPending_ con confirm verdadero envía y muestra formatSendSu
     fake.calls.sent.map((message) => message.to),
     ['alpha@example.test', 'beta@example.test', 'gamma@example.test']
   );
-  assert.equal(fake.getCell(2, 'Mail Merge Status'), 'Email Sent');
+  assert.equal(fake.getCell(2, 'Resultado'), 'Email Sent');
   assert.equal(ui.alerts.length, 1);
   assert.ok(ui.alerts[0].text.includes('3 correos aceptados por Gmail'), ui.alerts[0].text);
   assert.ok(ui.alerts[0].text.includes('Campaña: camp0001'), ui.alerts[0].text);
@@ -265,7 +265,7 @@ test('AC-17: runSendPending_ con confirm verdadero envía y muestra formatSendSu
 test('runSendPending_ sin filas válidas solo muestra el informe, sin confirm', () => {
   const { ctx, fake, ui } = setupUi({}, { confirm: true });
   for (const rowNumber of [2, 3, 4]) {
-    fake.setCell(rowNumber, 'Mail Merge Status', 'SKIP');
+    fake.setCell(rowNumber, 'Resultado', 'SKIP');
   }
 
   ctx.runSendPending_(fake.deps, ui);

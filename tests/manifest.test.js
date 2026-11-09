@@ -49,9 +49,17 @@ test('AC-28: ningún archivo de src usa UrlFetchApp, ScriptApp.newTrigger ni set
   }
 });
 
-test('D-01 (AC-28): constantes literales de compatibilidad', () => {
+test('D-31 (AC-28): constantes literales de compatibilidad', () => {
   const ctx = loadAppsScript();
   assert.equal(getConst(ctx, 'HEADERS.EMAIL'), 'Email Address');
+  assert.equal(getConst(ctx, 'HEADERS.DATE'), 'Fecha');
+  assert.equal(getConst(ctx, 'HEADERS.CAMPAIGN'), 'Campaña');
+  assert.equal(getConst(ctx, 'HEADERS.RESULT'), 'Resultado');
+  assert.equal(getConst(ctx, 'HEADERS.DETAIL'), 'Detalle');
+  assert.equal(getConst(ctx, 'LEGACY_HEADERS.STATUS'), 'Mail Merge Status');
+  assert.equal(getConst(ctx, 'LEGACY_HEADERS.SCHEDULED'), 'Scheduled Date');
+  assert.equal(getConst(ctx, 'STATUS.SKIP'), 'SKIP');
+  assert.equal(getConst(ctx, 'STATUS.SENT'), 'Email Sent');
   assert.equal(getConst(ctx, 'STATUS.SENDING'), 'ENVIANDO');
   assert.equal(getConst(ctx, 'STATUS.REVIEW'), 'REVISAR');
   assert.equal(getConst(ctx, 'TEST_SUBJECT_PREFIX'), '[PRUEBA] ');

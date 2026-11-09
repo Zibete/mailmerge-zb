@@ -36,14 +36,14 @@ function assertNoSideEffects(fake) {
 
 test('AC-27: buildPreflight_ es de solo lectura y devuelve las filas elegibles', () => {
   const { ctx, fixture, fake } = setup();
-  fake.setCell(4, 'Mail Merge Status', 'Email Sent');
+  fake.setCell(4, 'Resultado', 'Email Sent');
   const report = ctx.buildPreflight_(fake.deps, fixture.config);
 
   assertNoSideEffects(fake);
   assert.equal(report.ok, true);
   assert.deepEqual(plain(report.globalErrors), []);
   assert.deepEqual(validRowNumbers(report), [2, 3]);
-  assert.deepEqual(plain(report.excluded), [{ rowNumber: 4, reason: 'estado: Email Sent' }]);
+  assert.deepEqual(plain(report.excluded), [{ rowNumber: 4, reason: 'resultado: Email Sent' }]);
   assert.deepEqual(plain(report.invalid), []);
   assert.deepEqual(plain(report.sheet), { id: 101, name: 'Recipients' });
   assert.deepEqual(plain(report.template), { id: 'draft-001', subject: 'Notice {{Reference}}' });
@@ -282,7 +282,7 @@ test('formatPreflightReport_ resume la campaña y limita las filas inválidas a 
   for (let i = 0; i < 25; i++) {
     fake.appendRow(buildRow({ 'Email Address': 'not-an-email-' + i, 'First Name': 'N', Reference: 'R' }));
   }
-  fake.appendRow(buildRow({ 'Email Address': 'skip@example.test', 'Mail Merge Status': 'SKIP' }));
+  fake.appendRow(buildRow({ 'Email Address': 'skip@example.test', Resultado: 'SKIP' }));
   const report = ctx.buildPreflight_(fake.deps, fixture.config);
   assert.equal(report.invalid.length, 25);
   const text = ctx.formatPreflightReport_(report);
@@ -293,7 +293,7 @@ test('formatPreflightReport_ resume la campaña y limita las filas inválidas a 
   assert.ok(text.includes('Filas válidas: 3'));
   assert.ok(text.includes('Filas inválidas: 25'));
   assert.ok(text.includes('Filas excluidas: 1'));
-  assert.ok(text.includes('estado: SKIP: 1'));
+  assert.ok(text.includes('resultado: SKIP: 1'));
   assert.ok(text.includes('Cuota diaria disponible: 100'));
   assert.ok(text.includes(ctx.formatRowReview_(report)));
   assert.equal(text.split('\n').filter((line) => /^Fila \d+: /.test(line)).length, 20);

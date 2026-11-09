@@ -16,8 +16,10 @@ const HEADER_ROW = [
   'First Name',
   'Reference',
   'File Attachments',
-  'Mail Merge Status',
-  'Scheduled Date',
+  'Fecha',
+  'Campaña',
+  'Resultado',
+  'Detalle',
 ];
 
 // IDs sintéticos con el formato de Drive (20 caracteres o más).

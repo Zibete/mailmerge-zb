@@ -274,7 +274,7 @@ function buildPreflight_(deps, config) {
       report.valid.push({
         rowNumber: row.rowNumber,
         values: row.values,
-        key: rowKey_(row.values),
+        key: rowKey_(row.values, report.headers.columns),
         email: rowCheck.email,
         attachmentNames: attachments.names,
       });

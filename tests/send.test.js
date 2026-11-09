@@ -30,7 +30,7 @@ function runSend(ctx, fake, fixture, between) {
 }
 
 function status(fake, rowNumber) {
-  return fake.getCell(rowNumber, 'Mail Merge Status');
+  return fake.getCell(rowNumber, 'Resultado');
 }
 
 function sentTo(fake) {
@@ -88,7 +88,7 @@ test('Camino feliz: cada fila pasa por ENVIANDO → send → Email Sent y el loc
     { type: 'writeStatus', rowNumber: 4, value: 'Email Sent' },
   ]);
   assert.deepEqual(plain(fake.calls.lockCalls), [{ op: 'tryLock', ms: 10000 }, { op: 'release' }]);
-  assert.equal(fake.calls.statusWrites.every((write) => write.column === 4), true);
+  assert.equal(fake.calls.statusWrites.every((write) => write.column === 6), true);
   for (const row of [2, 3, 4]) {
     assert.equal(status(fake, row), 'Email Sent');
   }

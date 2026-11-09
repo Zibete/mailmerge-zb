@@ -27,7 +27,7 @@ function buildFor(ctx, fake, fixture, rowNumber) {
 }
 
 function statusColumn(fixture) {
-  return fixture.sheets[0].values.map((row) => row[4]);
+  return fixture.sheets[0].values.map((row) => row[6]);
 }
 
 test('AC-05 / AC-06 / AC-08: buildMessage_ adjunta el común y exactamente los archivos de la fila', () => {
@@ -143,14 +143,14 @@ test('D-07: runTestSend_ rechaza la fila 1, filas fuera de rango y filas vacías
 
 test('D-07: runTestSend_ envía con una fila no elegible (Email Sent) sin tocar su estado', () => {
   const { ctx, fixture, fake } = setup();
-  fake.setCell(3, 'Mail Merge Status', 'Email Sent');
+  fake.setCell(3, 'Resultado', 'Email Sent');
   const result = ctx.runTestSend_(fake.deps, fixture.config, 3);
 
   assert.equal(result.ok, true, JSON.stringify(plain(result.errors)));
   assert.equal(fake.calls.sent.length, 1);
   assert.equal(fake.calls.sent[0].subject, '[PRUEBA] Notice REF-002');
   assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(fake.getCell(3, 'Mail Merge Status'), 'Email Sent');
+  assert.equal(fake.getCell(3, 'Resultado'), 'Email Sent');
 });
 
 test('D-22: sin cuenta identificable la prueba no envía', () => {
