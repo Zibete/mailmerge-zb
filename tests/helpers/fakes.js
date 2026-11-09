@@ -2,7 +2,7 @@
 
 // Servicios falsos que imitan el contrato de `deps` del plan sobre el estado
 // mutable de un fixture (`tests/fixtures/campaign.js`). Registran las
-// llamadas con efectos (envíos, escrituras de celdas y de estado, registro,
+// llamadas con efectos (envíos, escrituras de celdas y de encabezados,
 // caché, lock) y permiten inyectar fallas, fijar reloj y cuota, y mutar la
 // hoja o la plantilla durante una ejecución mediante ganchos.
 //
@@ -13,8 +13,6 @@
 
 const nodeCrypto = require('node:crypto');
 
-const LOG_SHEET_NAME = 'Registro Mail Merge';
-const LOG_HEADERS = ['Fecha', 'Campaña', 'Pestaña', 'Fila', 'Destinatario', 'Resultado', 'Detalle'];
 const EXPORTABLE = [
   'application/vnd.google-apps.document',
   'application/vnd.google-apps.spreadsheet',
@@ -41,11 +39,9 @@ function createFakeDeps(fixture, options = {}) {
 
   const calls = {
     sent: [],
-    statusWrites: [],
-    logEntries: [],
     lockCalls: [],
-    // Orden combinado de escrituras (de estado V1, de celdas y de
-    // encabezados) y envíos, para verificar la secuencia ENVIANDO → send →
+    // Orden combinado de escrituras (de celdas y de encabezados), envíos y
+    // accesos a la caché, para verificar la secuencia ENVIANDO → send →
     // Email Sent.
     sequence: [],
     // Llamadas a `writeCells` (`{ sheetId, rowNumber, cells }`, con copias de
@@ -127,31 +123,8 @@ function createFakeDeps(fixture, options = {}) {
       }
       return out;
     },
-    writeStatus(sheetId, rowNumber, column, value) {
-      const rule = failOn.writeStatus;
-      const fails =
-        rule &&
-        (rule.value === undefined || rule.value === value) &&
-        (rule.rowNumber === undefined || rule.rowNumber === rowNumber);
-      if (fails && !rule.afterWrite) {
-        calls.sequence.push({ type: 'writeStatus-failed', rowNumber, value });
-        throw new Error('Falso: falla al escribir el estado');
-      }
-      const sheet = requireSheet(sheetId);
-      while (sheet.values.length < rowNumber) {
-        sheet.values.push(sheet.values[0].map(() => ''));
-        sheet.hiddenByUser.push(false);
-        sheet.hiddenByFilter.push(false);
-      }
-      sheet.values[rowNumber - 1][column] = value;
-      calls.statusWrites.push({ sheetId, rowNumber, column, value });
-      calls.sequence.push({ type: 'writeStatus', rowNumber, value });
-      if (fails) {
-        throw new Error('Falso: falla después de escribir el estado');
-      }
-    },
     // Escribe las celdas de una fila de datos en el orden dado (D-37),
-    // extendiendo la hoja si la fila no existe, como `writeStatus`.
+    // extendiendo la hoja si la fila no existe.
     // `failOn.writeCells = { value, rowNumber, afterWrite }` aplica cuando
     // alguna celda de la llamada tiene ese `value` (`undefined` = cualquiera)
     // y la fila coincide (`undefined` = cualquiera): sin `afterWrite` lanza
@@ -207,24 +180,6 @@ function createFakeDeps(fixture, options = {}) {
         calls.headerWrites.push({ sheetId, column: cell.column, value: cell.value });
         calls.sequence.push({ type: 'writeHeaderCells', column: cell.column, value: cell.value });
       });
-    },
-    appendLog(entry) {
-      if (matchesFailure(failOn.appendLog, entry)) {
-        throw new Error('Falso: falla al escribir el registro');
-      }
-      if (!fixture.sheets.some((sheet) => sheet.name === LOG_SHEET_NAME)) {
-        fixture.sheets.push({
-          id: 9000 + fixture.sheets.length,
-          name: LOG_SHEET_NAME,
-          values: [LOG_HEADERS.slice()],
-          hiddenByUser: [false],
-          hiddenByFilter: [false],
-        });
-      }
-      calls.logEntries.push(entry);
-    },
-    showLogSheet() {
-      return fixture.sheets.some((sheet) => sheet.name === LOG_SHEET_NAME);
     },
   };
 

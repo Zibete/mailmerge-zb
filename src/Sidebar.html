@@ -120,7 +120,7 @@
         google.script.run
           .withSuccessHandler(onOptionsLoaded)
           .withFailureHandler(onFailure)
-          .getConfigOptions();
+          .getPanelState();
       }
 
       form.addEventListener('submit', function (event) {

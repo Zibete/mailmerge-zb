@@ -2,12 +2,13 @@
  * Validación previa de la campaña (R-07, AC-27): lee la configuración, la
  * pestaña, el borrador, la cuenta y los adjuntos, y arma un informe. Es de
  * solo lectura: nunca llama a `gmail.send` ni escribe en la hoja
- * (`writeCells`, `writeHeaderCells`, `writeStatus`, `appendLog`). También arma
- * las vistas estructuradas para la sidebar (`buildValidationView_`), en JSON
- * plano y con los textos saneados (D-42, D-44).
+ * (`writeCells`, `writeHeaderCells`). También arma las vistas estructuradas
+ * para la sidebar (`buildValidationView_`), en JSON plano y con los textos
+ * saneados (D-42, D-44).
  */
 
-// Cantidad de filas que se listan en los informes antes de `y N filas más`.
+// Cantidad de filas que lista el texto de consentimiento (D-47) antes de
+// `y N filas más`.
 const REPORT_ROW_LIMIT_ = 20;
 
 // Valores de la fila por encabezado (`{ [encabezado]: valor mostrado }`).
@@ -300,93 +301,6 @@ function buildPreflight_(deps, config) {
   });
 
   return report;
-}
-
-// Línea `y N filas más` para listas truncadas.
-function moreRowsLine_(total, limit) {
-  return total > limit ? ['y ' + (total - limit) + ' filas más'] : [];
-}
-
-/**
- * Revisión por fila para el operador (D-23): adjuntos comunes del borrador y,
- * por cada fila válida (hasta `limit`), `Fila N → destinatario: archivos`.
- * Solo nombres de archivo saneados: nunca URLs, IDs de Drive ni valores de
- * otras columnas.
- */
-function formatRowReview_(report, limit) {
-  const max = limit === undefined ? REPORT_ROW_LIMIT_ : limit;
-  const common = ((report.templateData && report.templateData.attachments) || []).map(function (attachment) {
-    return sanitizeHeaderValue_(attachment.name);
-  });
-  const lines = ['Adjuntos comunes: ' + (common.length > 0 ? common.join(', ') : 'ninguno')];
-  const rows = (report.valid || []).slice().sort(function (a, b) {
-    return a.rowNumber - b.rowNumber;
-  });
-  rows.slice(0, max).forEach(function (row) {
-    const names = (row.attachmentNames || []).map(sanitizeHeaderValue_);
-    const prefix = 'Fila ' + row.rowNumber + ' → ' + sanitizeHeaderValue_(row.email);
-    lines.push(names.length > 0 ? prefix + ': ' + names.join(', ') : prefix + ' (sin adjuntos propios)');
-  });
-  return lines.concat(moreRowsLine_(rows.length, max)).join('\n');
-}
-
-/**
- * Informe de la validación previa en español, para `Ui.alert`.
- */
-function formatPreflightReport_(report) {
-  const lines = [
-    'Pestaña: ' + (report.sheet && report.sheet.name ? sanitizeHeaderValue_(report.sheet.name) : '(no disponible)'),
-    'Borrador (asunto): ' +
-      (report.template && report.template.subject ? sanitizeHeaderValue_(report.template.subject) : '(no disponible)'),
-    'Remitente: ' + (report.from ? sanitizeHeaderValue_(report.from) : '(no configurado)'),
-    'Reply-To: ' + (report.replyTo ? sanitizeHeaderValue_(report.replyTo) : '(ninguno)'),
-  ];
-
-  if (report.globalErrors.length > 0) {
-    lines.push('', 'Errores que bloquean toda la campaña:');
-    report.globalErrors.forEach(function (error) {
-      lines.push('- ' + sanitizeHeaderValue_(error));
-    });
-  }
-
-  lines.push(
-    '',
-    'Filas válidas: ' + report.valid.length,
-    'Filas inválidas: ' + report.invalid.length,
-    'Filas excluidas: ' + report.excluded.length
-  );
-  const byReason = {};
-  const reasonOrder = [];
-  report.excluded.forEach(function (row) {
-    if (!Object.prototype.hasOwnProperty.call(byReason, row.reason)) {
-      byReason[row.reason] = 0;
-      reasonOrder.push(row.reason);
-    }
-    byReason[row.reason]++;
-  });
-  reasonOrder.forEach(function (reason) {
-    lines.push('  - ' + sanitizeHeaderValue_(reason) + ': ' + byReason[reason]);
-  });
-  lines.push(
-    'Cuota diaria disponible: ' +
-      (report.quotaRemaining === null || report.quotaRemaining === undefined ? 'no disponible' : report.quotaRemaining)
-  );
-
-  if (report.globalErrors.length === 0) {
-    lines.push('', 'Correos que se enviarían:', formatRowReview_(report));
-  }
-
-  if (report.invalid.length > 0) {
-    lines.push('', 'Filas inválidas (no se enviarán):');
-    report.invalid.slice(0, REPORT_ROW_LIMIT_).forEach(function (row) {
-      lines.push('Fila ' + row.rowNumber + ': ' + row.reasons.map(sanitizeHeaderValue_).join('; '));
-    });
-    moreRowsLine_(report.invalid.length, REPORT_ROW_LIMIT_).forEach(function (line) {
-      lines.push(line);
-    });
-  }
-
-  return lines.join('\n');
 }
 
 // --- Vistas estructuradas para la sidebar (D-42, D-44, D-47) ---------------

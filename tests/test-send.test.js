@@ -116,8 +116,6 @@ test('AC-15: la prueba V2 envía una vez el mismo mensaje del envío real, salvo
   ]);
   assert.deepEqual(result.counts, { total: 1, processed: 1, sent: 1, skipped: 0, review: 0, pending: 0 });
   assert.deepEqual(result.rows, [{ rowNumber: 2, recipient: USER_EMAIL, result: 'Email Sent', detail: TEST_DETAIL }]);
-  assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(fake.calls.logEntries.length, 0);
 });
 
 test('AC-47 / D-40 / AC-54 / D-47: la prueba deja Email Sent; tras borrar Resultado el envío real exige consentimiento y reemplaza los metadatos', () => {

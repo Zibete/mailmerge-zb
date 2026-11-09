@@ -517,6 +517,8 @@ test('AC-53: configuración incompleta → error sin llamadas al lock ni escritu
   assert.equal(result.ok, false);
   assert.equal(result.errors.length, 1);
   assert.match(result.errors[0], /incompleta/);
+  // Mismo texto que el error global de la validación (`Preflight.js`).
+  assert.ok(result.errors[0].includes('sección "Campaña" del panel'), result.errors[0]);
   assert.deepEqual(fake.calls.lockCalls, []);
   assert.deepEqual(fake.calls.headerWrites, []);
 });

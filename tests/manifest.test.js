@@ -64,3 +64,19 @@ test('D-31 (AC-28): constantes literales de compatibilidad', () => {
   assert.equal(getConst(ctx, 'STATUS.REVIEW'), 'REVISAR');
   assert.equal(getConst(ctx, 'TEST_SUBJECT_PREFIX'), '[PRUEBA] ');
 });
+
+test('D-32: LEGACY_LOG_SHEET_NAME conserva el nombre de la pestaña de registro V1', () => {
+  const ctx = loadAppsScript();
+  assert.equal(getConst(ctx, 'LEGACY_LOG_SHEET_NAME'), 'Registro Mail Merge');
+});
+
+test('D-32 / D-37: ningún archivo de src escribe el registro V1 (appendLog, LOG_HEADERS, writeStatus)', () => {
+  const files = fs.readdirSync(SRC_DIR);
+  assert.ok(files.length > 0);
+  for (const name of files) {
+    const code = fs.readFileSync(path.join(SRC_DIR, name), 'utf8');
+    for (const forbidden of ['appendLog', 'LOG_HEADERS', 'writeStatus']) {
+      assert.equal(code.includes(forbidden), false, `${name} contiene ${forbidden}`);
+    }
+  }
+});

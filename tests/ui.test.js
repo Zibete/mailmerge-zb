@@ -6,54 +6,45 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadAppsScript, plain } = require('./helpers/load-apps-script');
 const { createFakeDeps } = require('./helpers/fakes');
-const { createCampaignFixture, LOG_SHEET_ID, CAMPAIGN_SHEET_ID, DRAFT_ID, USER_EMAIL, ALIAS_EMAIL } = require('./fixtures/campaign');
+const {
+  createCampaignFixture,
+  createLegacyFixture,
+  LOG_SHEET_ID,
+  CAMPAIGN_SHEET_ID,
+  DRAFT_ID,
+  USER_EMAIL,
+  ALIAS_EMAIL,
+} = require('./fixtures/campaign');
 
-const WARNING_3 = 'Se enviarán 3 correos reales. Esta acción no se puede deshacer.';
-const REVIEW_ROW_2 = 'Fila 2 → alpha@example.test: alpha-notice.pdf, Alpha Letter';
-const REVIEW_COMMON = 'Adjuntos comunes: common-terms.pdf';
+const SRC_DIR = path.join(__dirname, '..', 'src');
+const CONF_PREFIX = 'MM_CONF_';
+const EMAILS = ['alpha@example.test', 'beta@example.test', 'gamma@example.test'];
+const V2_HEADERS = [
+  'Email Address',
+  'First Name',
+  'Reference',
+  'File Attachments',
+  'Resultado',
+  'Fecha',
+  'Campaña',
+  'Detalle',
+];
+const WRONG_KIND_MESSAGE = 'La confirmación no corresponde a esta operación; volvé a revisar';
+const INVALID_MESSAGE = 'La confirmación venció o no es válida; volvé a revisar';
+const CONSENT_MESSAGE = 'Falta el consentimiento para reemplazar Fecha, Campaña o Detalle; volvé a revisar y confirmar';
 
-// `ui` falso: registra cada diálogo y devuelve respuestas configurables.
-function createFakeUi(options = {}) {
-  const ui = {
-    alerts: [],
-    confirms: [],
-    prompts: [],
-    sidebars: 0,
-    alert(title, text) {
-      ui.alerts.push({ title, text });
-    },
-    confirm(title, text) {
-      ui.confirms.push({ title, text });
-      return options.confirm === true;
-    },
-    prompt(title, text) {
-      ui.prompts.push({ title, text });
-      return options.prompt === undefined ? null : options.prompt;
-    },
-    showSidebar() {
-      ui.sidebars++;
-    },
-  };
-  return ui;
-}
-
-// Contexto con `createServices_` y `createUi_` reemplazados por falsos: las
-// declaraciones de función de un script son propiedades del objeto global
-// del contexto, así que `menuX()` y las funciones de la sidebar las resuelven.
-function setupUi(options = {}, uiOptions = {}) {
+// Contexto con `createServices_` reemplazado por el falso: las declaraciones
+// de función de un script son propiedades del objeto global del contexto, así
+// que los envoltorios públicos de `Ui.js` lo resuelven.
+function setup(options = {}, fixture = createCampaignFixture()) {
   const ctx = loadAppsScript();
-  const fixture = createCampaignFixture();
   const fake = createFakeDeps(fixture, options);
-  const ui = createFakeUi(uiOptions);
   ctx.createServices_ = () => fake.deps;
-  ctx.createUi_ = () => ui;
-  return { ctx, fixture, fake, ui };
+  return { ctx, fixture, fake };
 }
 
-function assertNoEffects(fake) {
-  assert.equal(fake.calls.sent.length, 0);
-  assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(fake.calls.logEntries.length, 0);
+function sheetById(fixture, id) {
+  return fixture.sheets.find((sheet) => sheet.id === id);
 }
 
 // Servicio de Google falso que falla y registra cualquier acceso.
@@ -66,14 +57,88 @@ function forbiddenService(name, accessed) {
           accessed.push(name + '.' + prop);
         }
         return () => {
-          throw new Error(name + ' no debería usarse en onOpen');
+          throw new Error(name + ' no debería usarse aquí');
         };
       },
     }
   );
 }
 
-test('onOpen agrega el menú Mail Merge con los cinco ítems y no usa servicios de datos', () => {
+// Globales de Google con todos los servicios de datos prohibidos, más los
+// que el test reemplace.
+function forbiddenGlobals(accessed, overrides) {
+  const globals = {};
+  for (const name of [
+    'GmailApp',
+    'DriveApp',
+    'LockService',
+    'MailApp',
+    'PropertiesService',
+    'Session',
+    'Utilities',
+    'CacheService',
+    'HtmlService',
+  ]) {
+    globals[name] = forbiddenService(name, accessed);
+  }
+  return { ...globals, ...overrides };
+}
+
+// `true` si `value` es igual a su ida y vuelta por JSON: solo `null`,
+// booleanos, números finitos, textos, arrays y objetos planos (D-44). Una
+// `Date`, un `Map`, una función, un `undefined` o un `NaN` no sobreviven.
+function equalsJsonRoundTrip(value) {
+  function same(a, b) {
+    if (a === null || typeof a !== 'object') {
+      return Object.is(a, b);
+    }
+    const tag = Object.prototype.toString.call(a);
+    if (b === null || typeof b !== 'object' || tag !== Object.prototype.toString.call(b)) {
+      return false;
+    }
+    if (tag === '[object Array]') {
+      return a.length === b.length && a.every((item, i) => same(item, b[i]));
+    }
+    if (tag !== '[object Object]') {
+      return false;
+    }
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key) => same(a[key], b[key]));
+  }
+  return value !== undefined && same(value, JSON.parse(JSON.stringify(value)));
+}
+
+function assertNoWrites(fake) {
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+  assert.equal(fake.calls.headerWrites.length, 0);
+  assert.equal(fake.calls.cachePuts.length, 0);
+  assert.equal(fake.calls.cacheRemoves.length, 0);
+  assert.equal(fake.calls.lockCalls.length, 0);
+  assert.equal(fake.calls.configWrites.length, 0);
+}
+
+// --- AC-32: todo en la sidebar, sin diálogos -------------------------------
+
+test('AC-32: ningún src/*.js usa Ui.alert, Ui.prompt ni ButtonSet', () => {
+  const files = fs.readdirSync(SRC_DIR).filter((name) => name.endsWith('.js'));
+  assert.ok(files.length > 0);
+  for (const name of files) {
+    const code = fs.readFileSync(path.join(SRC_DIR, name), 'utf8');
+    for (const forbidden of ['.alert(', '.prompt(', 'ButtonSet']) {
+      assert.equal(code.includes(forbidden), false, `${name} contiene ${forbidden}`);
+    }
+  }
+});
+
+test('AC-32: src/Sidebar.html no usa innerHTML ni alert, confirm o prompt', () => {
+  const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
+
+  assert.equal(html.includes('innerHTML'), false);
+  assert.doesNotMatch(html, /\b(alert|confirm|prompt)\s*\(/);
+});
+
+test('AC-32: onOpen agrega solo "Abrir Mail Merge" y no usa servicios de datos', () => {
   const accessed = [];
   const menus = [];
   const SpreadsheetApp = {
@@ -106,50 +171,32 @@ test('onOpen agrega el menú Mail Merge con los cinco ítems y no usa servicios 
       accessed.push('SpreadsheetApp.flush');
     },
   };
-  const globals = { SpreadsheetApp };
-  for (const name of ['GmailApp', 'DriveApp', 'LockService', 'MailApp', 'PropertiesService', 'Session', 'Utilities', 'HtmlService']) {
-    globals[name] = forbiddenService(name, accessed);
-  }
-  const ctx = loadAppsScript(globals);
+  const ctx = loadAppsScript(forbiddenGlobals(accessed, { SpreadsheetApp }));
 
   ctx.onOpen();
 
   assert.equal(menus.length, 1);
   assert.equal(menus[0].title, 'Mail Merge');
   assert.equal(menus[0].added, true);
-  assert.deepEqual(menus[0].items, [
-    ['Configurar campaña…', 'menuConfigure'],
-    ['Validar', 'menuValidate'],
-    ['Enviar prueba…', 'menuTestSend'],
-    ['Enviar pendientes…', 'menuSendPending'],
-    ['Ver registro', 'menuShowLog'],
-  ]);
-  for (const [, functionName] of menus[0].items) {
-    assert.equal(typeof ctx[functionName], 'function', functionName);
-  }
+  assert.deepEqual(menus[0].items, [['Abrir Mail Merge', 'menuOpenPanel']]);
+  assert.equal(typeof ctx.menuOpenPanel, 'function');
   assert.deepEqual(accessed, []);
 });
 
-test('createUi_ envuelve SpreadsheetApp.getUi: alert, confirm Sí/No, prompt Aceptar/Cancelar y sidebar', () => {
+test('D-25: menuOpenPanel abre la sidebar "Sidebar" con el título "Mail Merge" una sola vez', () => {
+  const accessed = [];
   const calls = [];
-  let nextButton = 'YES';
-  let nextPrompt = { button: 'OK', text: ' 3 ' };
-  const fakeUi = {
-    ButtonSet: { OK: 'OK', YES_NO: 'YES_NO', OK_CANCEL: 'OK_CANCEL' },
-    Button: { OK: 'OK', CANCEL: 'CANCEL', YES: 'YES', NO: 'NO', CLOSE: 'CLOSE' },
-    alert(title, text, buttons) {
-      calls.push(['alert', title, text, buttons]);
-      return buttons === 'YES_NO' ? nextButton : 'OK';
-    },
-    prompt(title, text, buttons) {
-      calls.push(['prompt', title, text, buttons]);
+  const SpreadsheetApp = {
+    getUi() {
       return {
-        getSelectedButton: () => nextPrompt.button,
-        getResponseText: () => nextPrompt.text,
+        showSidebar(output) {
+          calls.push(['showSidebar', output.file, output.title]);
+        },
       };
     },
-    showSidebar(output) {
-      calls.push(['showSidebar', output.file, output.title]);
+    getActiveSpreadsheet() {
+      accessed.push('SpreadsheetApp.getActiveSpreadsheet');
+      throw new Error('abrir el panel no debería leer la hoja');
     },
   };
   const HtmlService = {
@@ -159,6 +206,7 @@ test('createUi_ envuelve SpreadsheetApp.getUi: alert, confirm Sí/No, prompt Ace
         file,
         title: '',
         setTitle(title) {
+          calls.push(['setTitle', title]);
           output.title = title;
           return output;
         },
@@ -166,234 +214,121 @@ test('createUi_ envuelve SpreadsheetApp.getUi: alert, confirm Sí/No, prompt Ace
       return output;
     },
   };
-  const ctx = loadAppsScript({ SpreadsheetApp: { getUi: () => fakeUi }, HtmlService });
-  const ui = ctx.createUi_();
+  const ctx = loadAppsScript(forbiddenGlobals(accessed, { SpreadsheetApp, HtmlService }));
 
-  ui.alert('Título', 'Texto');
-  assert.deepEqual(calls.pop(), ['alert', 'Título', 'Texto', 'OK']);
+  ctx.menuOpenPanel();
 
-  assert.equal(ui.confirm('Confirmar', '¿Seguro?'), true);
-  assert.equal(calls.pop()[3], 'YES_NO');
-  nextButton = 'NO';
-  assert.equal(ui.confirm('Confirmar', '¿Seguro?'), false);
-  nextButton = 'CLOSE';
-  assert.equal(ui.confirm('Confirmar', '¿Seguro?'), false);
-
-  assert.equal(ui.prompt('Fila', '¿Qué fila?'), ' 3 ');
-  assert.equal(calls.pop()[3], 'OK_CANCEL');
-  nextPrompt = { button: 'CANCEL', text: '3' };
-  assert.equal(ui.prompt('Fila', '¿Qué fila?'), null);
-  nextPrompt = { button: 'CLOSE', text: '3' };
-  assert.equal(ui.prompt('Fila', '¿Qué fila?'), null);
-
-  calls.length = 0;
-  ctx.menuConfigure();
-  assert.deepEqual(calls[0], ['createHtmlOutputFromFile', 'Sidebar']);
-  assert.equal(calls[1][0], 'showSidebar');
-  assert.equal(calls[1][1], 'Sidebar');
+  assert.deepEqual(calls, [
+    ['createHtmlOutputFromFile', 'Sidebar'],
+    ['setTitle', 'Mail Merge'],
+    ['showSidebar', 'Sidebar', 'Mail Merge'],
+  ]);
+  assert.deepEqual(accessed, []);
 });
 
-test('AC-27: runValidate_ muestra un alert y no envía, no escribe estado ni registro', () => {
-  const { ctx, fake, ui } = setupUi();
+test('Sidebar: src/Sidebar.html carga con getPanelState() y guarda con saveConfig', () => {
+  const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
 
-  ctx.runValidate_(fake.deps, ui);
-
-  assert.equal(ui.alerts.length, 1);
-  assert.equal(ui.confirms.length, 0);
-  assertNoEffects(fake);
-  assert.match(ui.alerts[0].text, /Filas válidas: 3/);
+  assert.ok(html.includes('getPanelState()'));
+  assert.equal(html.includes('getConfigOptions'), false);
+  assert.ok(html.includes('saveConfig('));
+  assert.ok(html.includes('withFailureHandler'));
+  assert.ok(html.includes('new Option('));
 });
 
-test('D-23 (AC-27): el alert de Validar incluye la revisión por fila', () => {
-  const { ctx, ui } = setupUi();
+// --- AC-33: validar es de solo lectura -------------------------------------
 
-  ctx.menuValidate();
+test('AC-33: validateCampaign_ no envía ni escribe hoja, caché, configuración ni toma el lock; lista todas las filas válidas', () => {
+  const { ctx, fake } = setup();
 
-  assert.equal(ui.alerts.length, 1);
-  assert.ok(ui.alerts[0].text.includes(REVIEW_COMMON));
-  assert.ok(ui.alerts[0].text.includes(REVIEW_ROW_2));
-  assert.equal(ui.alerts[0].text.includes('drive.google.com'), false);
-});
+  const view = plain(ctx.validateCampaign_(fake.deps));
 
-test('AC-17: runSendPending_ con confirm falso no envía ni escribe estado', () => {
-  const { ctx, fake, ui } = setupUi({}, { confirm: false });
-
-  ctx.runSendPending_(fake.deps, ui);
-
-  assert.equal(ui.confirms.length, 1);
-  assertNoEffects(fake);
-  assert.equal(fake.calls.lockCalls.length, 0);
-  assert.equal(fake.getCell(2, 'Resultado'), '');
-});
-
-test('AC-17 / D-23: el texto de confirm tiene la advertencia, la cantidad de filas y la revisión por fila', () => {
-  const { ctx, fake, ui } = setupUi({}, { confirm: false });
-
-  ctx.runSendPending_(fake.deps, ui);
-
-  const text = ui.confirms[0].text;
-  assert.ok(text.includes(WARNING_3), text);
-  assert.ok(text.includes('Filas a enviar: 3'), text);
-  assert.ok(text.includes('Pestaña: Recipients'), text);
-  assert.ok(text.includes('Notice {{Reference}}'), text);
-  assert.ok(text.includes('Remitente: ' + USER_EMAIL), text);
-  assert.ok(text.includes(REVIEW_COMMON), text);
-  assert.ok(text.includes(REVIEW_ROW_2), text);
-  assert.ok(text.includes('Fila 3 → beta@example.test: beta-notice.pdf'), text);
-  assert.ok(text.includes('Fila 4 → gamma@example.test (sin adjuntos propios)'), text);
-  assert.equal(text.includes('drive.google.com'), false);
-  assert.equal(text.includes('docs.google.com'), false);
-});
-
-test('AC-17: runSendPending_ con confirm verdadero envía y muestra formatSendSummary_', () => {
-  const { ctx, fake, ui } = setupUi({}, { confirm: true });
-
-  ctx.menuSendPending();
-
-  assert.equal(ui.confirms.length, 1);
-  assert.equal(fake.calls.sent.length, 3);
+  assertNoWrites(fake);
+  assert.equal(view.ok, true, JSON.stringify(view.globalErrors));
+  assert.deepEqual(view.counts, { valid: 3, invalid: 0, excluded: 0 });
   assert.deepEqual(
-    fake.calls.sent.map((message) => message.to),
-    ['alpha@example.test', 'beta@example.test', 'gamma@example.test']
+    view.rows.map((row) => [row.rowNumber, row.email]),
+    [
+      [2, EMAILS[0]],
+      [3, EMAILS[1]],
+      [4, EMAILS[2]],
+    ]
   );
-  assert.equal(fake.getCell(2, 'Resultado'), 'Email Sent');
-  assert.equal(ui.alerts.length, 1);
-  assert.ok(ui.alerts[0].text.includes('3 correos aceptados por Gmail'), ui.alerts[0].text);
-  assert.ok(ui.alerts[0].text.includes('Campaña: camp0001'), ui.alerts[0].text);
+  assert.equal(view.moreRows, 0);
+  assert.equal(view.setup, null);
 });
 
-test('runSendPending_ sin filas válidas solo muestra el informe, sin confirm', () => {
-  const { ctx, fake, ui } = setupUi({}, { confirm: true });
-  for (const rowNumber of [2, 3, 4]) {
-    fake.setCell(rowNumber, 'Resultado', 'SKIP');
-  }
+test('AC-33: el envoltorio validateCampaign() devuelve la misma vista sin efectos', () => {
+  const { ctx, fake } = setup();
 
-  ctx.runSendPending_(fake.deps, ui);
+  const view = plain(ctx.validateCampaign());
 
-  assert.equal(ui.confirms.length, 0);
-  assert.equal(ui.alerts.length, 1);
-  assert.match(ui.alerts[0].text, /Filas válidas: 0/);
-  assertNoEffects(fake);
+  assertNoWrites(fake);
+  assert.deepEqual(view, plain(ctx.validateCampaign_(fake.deps)));
 });
 
-test('AC-14: runSendPending_ con errores globales solo muestra el informe, sin confirm', () => {
-  const { ctx, fixture, fake, ui } = setupUi({}, { confirm: true });
-  fixture.config.from = 'intruso@example.test';
+// --- getPanelState_ y saveConfig_ (portados de la V1 + D-39, D-32) ---------
 
-  ctx.runSendPending_(fake.deps, ui);
+const VALID_INPUT = { sheetId: '101', draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '' };
 
-  assert.equal(ui.confirms.length, 0);
-  assert.equal(ui.alerts.length, 1);
-  assert.match(ui.alerts[0].text, /no está autorizado/);
-  assertNoEffects(fake);
-});
+test('getPanelState_ lista pestañas, borradores y remitentes y la configuración actual, sin efectos', () => {
+  const { ctx, fake } = setup();
 
-for (const answer of [null, 'abc', '1', '2.5', '-3', '']) {
-  test(`D-07: runTestSendFromUi_ con respuesta ${JSON.stringify(answer)} no envía`, () => {
-    const { ctx, fake, ui } = setupUi({}, { prompt: answer });
+  const state = plain(ctx.getPanelState_(fake.deps));
 
-    ctx.runTestSendFromUi_(fake.deps, ui);
-
-    assert.equal(ui.prompts.length, 1);
-    assertNoEffects(fake);
-    if (answer === null) {
-      assert.equal(ui.alerts.length, 0);
-    } else {
-      assert.equal(ui.alerts.length, 1);
-      assert.match(ui.alerts[0].text, /número de fila/);
-    }
+  assert.deepEqual(state.sheets, [{ id: CAMPAIGN_SHEET_ID, name: 'Recipients' }]);
+  assert.deepEqual(state.senders, [USER_EMAIL, ALIAS_EMAIL]);
+  assert.deepEqual(state.drafts, [{ id: DRAFT_ID, subject: 'Notice {{Reference}}', date: '2026-11-01T10:00:00.000Z' }]);
+  assert.deepEqual(state.current, {
+    sheetId: CAMPAIGN_SHEET_ID,
+    draftId: DRAFT_ID,
+    from: USER_EMAIL,
+    replyTo: '',
+    campaignName: '',
   });
-}
-
-test('AC-15: runTestSendFromUi_ con fila 2 envía una prueba y muestra el resultado', () => {
-  const { ctx, fake, ui } = setupUi({}, { prompt: ' 2 ' });
-
-  ctx.menuTestSend();
-
-  assert.equal(fake.calls.sent.length, 1);
-  assert.equal(fake.calls.sent[0].to, USER_EMAIL);
-  assert.equal(fake.calls.sent[0].subject, '[PRUEBA] Notice REF-001');
-  assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(ui.alerts.length, 1);
-  assert.ok(ui.alerts[0].text.includes(USER_EMAIL), ui.alerts[0].text);
-  assert.ok(ui.alerts[0].text.includes('fila 2'), ui.alerts[0].text);
+  assertNoWrites(fake);
 });
 
-test('AC-16: runTestSendFromUi_ con una fila inválida muestra los errores sin enviar', () => {
-  const { ctx, fake, ui } = setupUi({}, { prompt: '99' });
+test('getPanelState_ sin configuración guardada devuelve current: null', () => {
+  const { ctx, fixture, fake } = setup();
+  fixture.config = null;
 
-  ctx.runTestSendFromUi_(fake.deps, ui);
-
-  assertNoEffects(fake);
-  assert.equal(ui.alerts.length, 1);
-  assert.match(ui.alerts[0].text, /No se envió/);
-  assert.match(ui.alerts[0].text, /La fila elegida no existe/);
+  assert.equal(plain(ctx.getPanelState_(fake.deps)).current, null);
 });
 
-test('menuShowLog sin pestaña de registro muestra "Todavía no hay registro."', () => {
-  const { ctx, fixture, ui } = setupUi();
-  fixture.sheets = fixture.sheets.filter((sheet) => sheet.id !== LOG_SHEET_ID);
+test('saveConfig_ guarda sheetId numérico a partir del texto del select', () => {
+  const { ctx, fake } = setup();
 
-  ctx.menuShowLog();
+  const saved = plain(
+    ctx.saveConfig_(fake.deps, { sheetId: '101', draftId: DRAFT_ID, from: ALIAS_EMAIL, replyTo: ' respuestas@example.test ' })
+  );
 
-  assert.equal(ui.alerts.length, 1);
-  assert.ok(ui.alerts[0].text.includes('Todavía no hay registro.'));
-});
-
-test('menuShowLog con pestaña de registro la activa sin alert', () => {
-  const { ctx, ui } = setupUi();
-
-  ctx.menuShowLog();
-
-  assert.equal(ui.alerts.length, 0);
-});
-
-test('Sidebar: getConfigOptions excluye el registro, lista remitentes y fechas como texto', () => {
-  const { ctx, fake } = setupUi();
-
-  const options = plain(ctx.getConfigOptions());
-
-  assert.deepEqual(options.sheets, [{ id: CAMPAIGN_SHEET_ID, name: 'Recipients' }]);
-  assert.deepEqual(options.senders, [USER_EMAIL, ALIAS_EMAIL]);
-  assert.equal(options.drafts.length, 1);
-  assert.equal(options.drafts[0].id, DRAFT_ID);
-  assert.equal(options.drafts[0].subject, 'Notice {{Reference}}');
-  assert.equal(typeof options.drafts[0].date, 'string');
-  assert.deepEqual(options.current, { sheetId: CAMPAIGN_SHEET_ID, draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '' });
-  assertNoEffects(fake);
-  assert.equal(fake.calls.configWrites.length, 0);
-});
-
-test('Sidebar: saveConfig guarda sheetId numérico a partir del texto del select', () => {
-  const { ctx, fake } = setupUi();
-
-  ctx.saveConfig({ sheetId: '101', draftId: DRAFT_ID, from: ALIAS_EMAIL, replyTo: ' respuestas@example.test ' });
-
-  assert.equal(fake.calls.configWrites.length, 1);
-  assert.deepEqual(plain(fake.calls.configWrites[0]), {
+  const expected = {
     sheetId: 101,
     draftId: DRAFT_ID,
     from: ALIAS_EMAIL,
     replyTo: 'respuestas@example.test',
-  });
+    campaignName: '',
+  };
+  assert.equal(fake.calls.configWrites.length, 1);
+  assert.deepEqual(plain(fake.calls.configWrites[0]), expected);
   assert.equal(typeof fake.calls.configWrites[0].sheetId, 'number');
+  assert.deepEqual(saved, expected);
 });
 
-test('Sidebar: saveConfig acepta Reply-To vacío', () => {
-  const { ctx, fake } = setupUi();
+test('saveConfig_ acepta Reply-To vacío', () => {
+  const { ctx, fake } = setup();
 
-  ctx.saveConfig({ sheetId: '101', draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '' });
+  ctx.saveConfig_(fake.deps, VALID_INPUT);
 
   assert.equal(fake.calls.configWrites.length, 1);
   assert.equal(fake.calls.configWrites[0].replyTo, '');
 });
 
-const VALID_INPUT = { sheetId: '101', draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '' };
 const REJECTIONS = [
   ['R-02: pestaña inexistente', { sheetId: '999' }, /pestaña/i],
   ['R-02: sheetId no numérico', { sheetId: 'x' }, /pestaña/i],
   ['R-02: sheetId vacío', { sheetId: '' }, /pestaña/i],
-  ['R-02: pestaña de registro', { sheetId: String(LOG_SHEET_ID) }, /registro/i],
   ['R-02: borrador ajeno', { draftId: 'draft-ajeno' }, /borrador/i],
   ['R-04: alias no autorizado', { from: 'intruso@example.test' }, /remitente/i],
   ['R-04: Reply-To inválido', { replyTo: 'no es un correo' }, /Reply-To/],
@@ -401,20 +336,273 @@ const REJECTIONS = [
 ];
 
 for (const [title, patch, pattern] of REJECTIONS) {
-  test(`Sidebar: saveConfig rechaza ${title} sin llamar a setConfig`, () => {
-    const { ctx, fake } = setupUi();
+  test(`saveConfig_ rechaza ${title} sin llamar a setConfig`, () => {
+    const { ctx, fake } = setup();
 
-    assert.throws(() => ctx.saveConfig({ ...VALID_INPUT, ...patch }), pattern);
+    assert.throws(() => ctx.saveConfig_(fake.deps, { ...VALID_INPUT, ...patch }), pattern);
     assert.equal(fake.calls.configWrites.length, 0);
   });
 }
 
-test('Sidebar: src/Sidebar.html no usa innerHTML y llama a getConfigOptions y saveConfig', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'Sidebar.html'), 'utf8');
+test('AC-46 / D-39: saveConfig_ guarda el nombre de campaña saneado (sin CR/LF ni tabulaciones, recortado)', () => {
+  const { ctx, fake } = setup();
 
-  assert.equal(html.includes('innerHTML'), false);
-  assert.ok(html.includes('getConfigOptions()'));
-  assert.ok(html.includes('saveConfig('));
-  assert.ok(html.includes('withFailureHandler'));
-  assert.ok(html.includes('new Option('));
+  const saved = plain(ctx.saveConfig_(fake.deps, { ...VALID_INPUT, campaignName: '  Aviso\r\nde\tnoviembre  ' }));
+
+  assert.equal(saved.campaignName, 'Aviso de noviembre');
+  assert.equal(fake.calls.configWrites[0].campaignName, 'Aviso de noviembre');
+  assert.equal(plain(ctx.getPanelState_(fake.deps)).current.campaignName, 'Aviso de noviembre');
+});
+
+test('AC-46 / D-39: saveConfig_ acepta 80 caracteres y rechaza 81 sin llamar a setConfig', () => {
+  const { ctx, fake } = setup();
+
+  assert.throws(() => ctx.saveConfig_(fake.deps, { ...VALID_INPUT, campaignName: 'x'.repeat(81) }), /80 caracteres/);
+  assert.equal(fake.calls.configWrites.length, 0);
+
+  // El límite se mide después de recortar.
+  ctx.saveConfig_(fake.deps, { ...VALID_INPUT, campaignName: ' ' + 'x'.repeat(80) + ' ' });
+  assert.equal(fake.calls.configWrites.length, 1);
+  assert.equal(fake.calls.configWrites[0].campaignName, 'x'.repeat(80));
+});
+
+test('AC-46 / D-39: saveConfig_ con nombre vacío, en blanco o ausente guarda campaignName: ""', () => {
+  for (const campaignName of [undefined, null, '', '   ', '\r\n']) {
+    const { ctx, fake } = setup();
+    const input = { ...VALID_INPUT };
+    if (campaignName !== undefined) {
+      input.campaignName = campaignName;
+    }
+
+    const saved = plain(ctx.saveConfig_(fake.deps, input));
+
+    assert.equal(saved.campaignName, '', JSON.stringify(campaignName));
+    assert.equal(fake.calls.configWrites[0].campaignName, '');
+    assert.equal(plain(ctx.getPanelState_(fake.deps)).current.campaignName, '');
+  }
+});
+
+test('AC-51 / D-32: getPanelState_ no ofrece "Registro Mail Merge" y saveConfig_ la rechaza', () => {
+  const { ctx, fake } = setup();
+
+  const names = plain(ctx.getPanelState_(fake.deps)).sheets.map((sheet) => sheet.name);
+  assert.equal(names.includes('Registro Mail Merge'), false);
+
+  assert.throws(() => ctx.saveConfig_(fake.deps, { ...VALID_INPUT, sheetId: String(LOG_SHEET_ID) }), /registro/i);
+  assert.equal(fake.calls.configWrites.length, 0);
+});
+
+test('AC-51 / D-32: preparar columnas, la prueba y el envío dejan intacta la pestaña "Registro Mail Merge"', () => {
+  const fixture = createLegacyFixture();
+  const log = sheetById(fixture, LOG_SHEET_ID);
+  log.values.push(['2026-10-01 09:00', 'camp0001', 'Recipients', '5', 'delta@example.test', 'Email Sent', 'Aceptado por Gmail']);
+  log.hiddenByUser.push(false);
+  log.hiddenByFilter.push(false);
+  const before = JSON.parse(JSON.stringify(log));
+  const { ctx, fake } = setup({}, fixture);
+
+  const validation = plain(ctx.validateCampaign());
+  assert.equal(validation.setup.needed, true);
+  assert.equal(plain(ctx.applyColumnSetup(validation.setup.headerKey)).ok, true);
+  const trial = plain(ctx.prepareTestSend(2));
+  assert.equal(trial.ok, true, JSON.stringify(trial.errors));
+  assert.equal(plain(ctx.executeTestSend(trial.token)).ok, true);
+  const prep = plain(ctx.prepareSendPending());
+  assert.equal(prep.ok, true, JSON.stringify(prep.errors));
+  const result = plain(ctx.executeSendPending(prep.token, true));
+  assert.equal(result.ok, true, JSON.stringify(result));
+
+  assert.equal(fake.calls.sent.length, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(log)), before);
+  assert.equal(fake.calls.cellWrites.some((write) => write.sheetId === LOG_SHEET_ID), false);
+  assert.equal(fake.calls.headerWrites.some((write) => write.sheetId === LOG_SHEET_ID), false);
+});
+
+// --- D-44: contrato con el cliente -----------------------------------------
+
+test('D-44: el resultado de cada función pública …_ es igual a su ida y vuelta por JSON', () => {
+  const { ctx, fake } = setup();
+  const results = {};
+
+  results.getPanelState_ = ctx.getPanelState_(fake.deps);
+  results.saveConfig_ = ctx.saveConfig_(fake.deps, { ...VALID_INPUT, campaignName: 'Aviso' });
+  results.validateCampaign_ = ctx.validateCampaign_(fake.deps);
+  results.prepareTestSendRejected = ctx.prepareTestSend_(fake.deps, 99);
+  const trial = ctx.prepareTestSend_(fake.deps, 2);
+  results.prepareTestSend_ = trial;
+  results.executeTestSend_ = ctx.executeTestSend_(fake.deps, trial.token);
+  const prep = ctx.prepareSendPending_(fake.deps);
+  results.prepareSendPending_ = prep;
+  results.getSendProgressMissing = ctx.getSendProgress_(fake.deps, prep.token);
+  results.executeSendPending_ = ctx.executeSendPending_(fake.deps, prep.token);
+  results.executeSendPendingRejected = ctx.executeSendPending_(fake.deps, prep.token);
+  results.getSendProgress_ = ctx.getSendProgress_(fake.deps, prep.token);
+  results.cancelConfirmation = ctx.cancelConfirmation(prep.token);
+
+  const legacy = setup({}, createLegacyFixture());
+  const key = plain(legacy.ctx.validateCampaign_(legacy.fake.deps)).setup.headerKey;
+  results.applyColumnSetup = legacy.ctx.applyColumnSetup(key);
+
+  assert.equal(results.prepareTestSend_.ok, true);
+  assert.equal(results.executeSendPending_.ok, true);
+  assert.equal(results.getSendProgress_.found, true);
+  for (const [name, value] of Object.entries(results)) {
+    assert.ok(equalsJsonRoundTrip(value), `${name} no es JSON plano: ${JSON.stringify(value)}`);
+  }
+});
+
+test('D-44: getPanelState_ devuelve las fechas de los borradores como texto, también si llegan como Date', () => {
+  const { ctx, fixture, fake } = setup();
+  fixture.gmail.drafts[0].date = new Date(Date.UTC(2026, 10, 1, 10, 0, 0));
+  fixture.gmail.drafts.push({ ...fixture.gmail.drafts[0], id: 'draft-002', date: '2026-11-02T08:30:00.000Z' });
+
+  const state = ctx.getPanelState_(fake.deps);
+
+  assert.ok(equalsJsonRoundTrip(state));
+  assert.deepEqual(
+    plain(state.drafts).map((draft) => draft.date),
+    ['2026-11-01T10:00:00.000Z', '2026-11-02T08:30:00.000Z']
+  );
+});
+
+// --- Envoltorios públicos (createServices_ reemplazado por el falso) -------
+
+test('envoltorios: prepareSendPending() + executeSendPending(token) envían los tres correos y getSendProgress lo informa', () => {
+  const { ctx, fake } = setup();
+
+  const prep = plain(ctx.prepareSendPending());
+  assert.equal(prep.ok, true, JSON.stringify(prep.errors));
+  assert.equal(prep.view.count, 3);
+  assert.equal(fake.calls.sent.length, 0);
+
+  const result = plain(ctx.executeSendPending(prep.token));
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.kind, 'send');
+  assert.deepEqual(
+    fake.calls.sent.map((message) => message.to),
+    EMAILS
+  );
+  assert.equal(result.counts.sent, 3);
+  for (const row of [2, 3, 4]) {
+    assert.equal(fake.getCell(row, 'Resultado'), 'Email Sent');
+  }
+
+  const progress = plain(ctx.getSendProgress(prep.token));
+  assert.equal(progress.found, true);
+  assert.equal(progress.progress.state, 'TERMINADO');
+  assert.equal(progress.progress.counts.sent, 3);
+});
+
+test('envoltorios: executeSendPending con un token de prueba se rechaza sin enviar', () => {
+  const { ctx, fake } = setup();
+
+  const trial = plain(ctx.prepareTestSend('2'));
+  assert.equal(trial.ok, true, JSON.stringify(trial.errors));
+  const result = plain(ctx.executeSendPending(trial.token));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.stoppedReason, WRONG_KIND_MESSAGE);
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+});
+
+test('envoltorios: cancelConfirmation(token) borra la confirmación y un execute posterior se rechaza', () => {
+  const { ctx, fixture, fake } = setup();
+
+  const prep = plain(ctx.prepareSendPending());
+  assert.ok(Object.prototype.hasOwnProperty.call(fixture.cache, CONF_PREFIX + prep.token));
+
+  assert.deepEqual(plain(ctx.cancelConfirmation(prep.token)), { ok: true });
+  assert.equal(Object.prototype.hasOwnProperty.call(fixture.cache, CONF_PREFIX + prep.token), false);
+
+  const result = plain(ctx.executeSendPending(prep.token));
+  assert.equal(result.ok, false);
+  assert.equal(result.stoppedReason, INVALID_MESSAGE);
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+});
+
+test('envoltorios: applyColumnSetup(headerKey) sobre la hoja V1 deja los encabezados V2', () => {
+  const fixture = createLegacyFixture();
+  const { ctx, fake } = setup({}, fixture);
+
+  const key = plain(ctx.validateCampaign()).setup.headerKey;
+  const result = plain(ctx.applyColumnSetup(key));
+
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(sheetById(fixture, CAMPAIGN_SHEET_ID).values[0], V2_HEADERS);
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+  assert.equal(plain(ctx.validateCampaign()).ok, true);
+});
+
+test('envoltorios: prepareTestSend("2") + executeTestSend(token) envían un correo a la cuenta propia', () => {
+  const { ctx, fake } = setup();
+
+  const trial = plain(ctx.prepareTestSend('2'));
+  assert.equal(trial.ok, true, JSON.stringify(trial.errors));
+  assert.equal(trial.view.to, USER_EMAIL);
+  const result = plain(ctx.executeTestSend(trial.token));
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.kind, 'test');
+  assert.equal(fake.calls.sent.length, 1);
+  assert.equal(fake.calls.sent[0].to, USER_EMAIL);
+  assert.equal(fake.calls.sent[0].subject, '[PRUEBA] Notice REF-001');
+  assert.equal(fake.getCell(2, 'Resultado'), 'Email Sent');
+});
+
+test('D-47: executeSendPending pasa el consentimiento sin alterarlo (solo true vale)', () => {
+  const { ctx, fake } = setup();
+  fake.setCell(2, 'Detalle', 'nota previa');
+
+  const first = plain(ctx.prepareSendPending());
+  assert.equal(first.view.consentRequired, true);
+  const rejected = plain(ctx.executeSendPending(first.token));
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.stoppedReason, CONSENT_MESSAGE);
+
+  const second = plain(ctx.prepareSendPending());
+  const coerced = plain(ctx.executeSendPending(second.token, 'true'));
+  assert.equal(coerced.ok, false);
+  assert.equal(coerced.stoppedReason, CONSENT_MESSAGE);
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+
+  const third = plain(ctx.prepareSendPending());
+  const result = plain(ctx.executeSendPending(third.token, true));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(
+    fake.calls.sent.map((message) => message.to),
+    EMAILS
+  );
+});
+
+test('D-47: executeTestSend pasa el consentimiento sin alterarlo (solo true vale)', () => {
+  const { ctx, fake } = setup();
+  fake.setCell(2, 'Campaña', 'campaña anterior');
+
+  const first = plain(ctx.prepareTestSend(2));
+  assert.equal(first.view.consentRequired, true);
+  const rejected = plain(ctx.executeTestSend(first.token));
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.stoppedReason, CONSENT_MESSAGE);
+  assert.equal(fake.calls.sent.length, 0);
+
+  const second = plain(ctx.prepareTestSend(2));
+  const result = plain(ctx.executeTestSend(second.token, true));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(fake.calls.sent.length, 1);
+  assert.equal(fake.calls.sent[0].to, USER_EMAIL);
+});
+
+test('envoltorios: getPanelState() y saveConfig(input) usan createServices_()', () => {
+  const { ctx, fake } = setup();
+
+  const saved = plain(ctx.saveConfig({ ...VALID_INPUT, campaignName: 'Aviso' }));
+
+  assert.equal(saved.campaignName, 'Aviso');
+  assert.equal(fake.calls.configWrites.length, 1);
+  assert.equal(plain(ctx.getPanelState()).current.campaignName, 'Aviso');
 });

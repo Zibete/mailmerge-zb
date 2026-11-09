@@ -10,8 +10,7 @@
  */
 
 // Prefijos que Sheets interpreta como fórmula al escribir texto con
-// `setValue` o `appendRow`; se fuerzan a texto con un apóstrofo inicial
-// (D-38, AC-26).
+// `setValue`; se fuerzan a texto con un apóstrofo inicial (D-38, AC-41).
 const FORMULA_PREFIXES_ = ['=', '+', '-', '@'];
 
 // Valor seguro para escribir en una celda: un texto que empieza con un prefijo
@@ -84,13 +83,6 @@ function createServices_() {
       return requireSheet(sheetId).getRange(rowNumber, 1, 1, width).getDisplayValues()[0];
     },
 
-    // `column` es el índice 0-based de `mapHeaders_`. `flush` persiste el
-    // valor antes de seguir (checkpoint por fila).
-    writeStatus: function (sheetId, rowNumber, column, value) {
-      requireSheet(sheetId).getRange(rowNumber, column + 1).setValue(value);
-      SpreadsheetApp.flush();
-    },
-
     // Escribe celdas de una fila de datos (`column` 0-based) en el orden dado,
     // con los textos neutralizados (D-37, D-38). Un único `flush` al final
     // persiste toda la transición antes de seguir.
@@ -119,37 +111,6 @@ function createServices_() {
         sheet.getRange(1, cell.column + 1).setValue(cell.value);
       });
       SpreadsheetApp.flush();
-    },
-
-    // Crea la pestaña de registro al primer uso (D-17) y agrega una fila en
-    // el orden de `LOG_HEADERS`.
-    appendLog: function (entry) {
-      const book = spreadsheet();
-      let log = book.getSheetByName(LOG_SHEET_NAME);
-      if (!log) {
-        log = book.insertSheet(LOG_SHEET_NAME);
-        log.appendRow(LOG_HEADERS.slice());
-      }
-      log.appendRow(
-        [
-          entry.date,
-          entry.campaignId,
-          entry.sheetName,
-          entry.rowNumber,
-          entry.recipient,
-          entry.result,
-          entry.detail,
-        ].map(asSheetValue_)
-      );
-    },
-
-    showLogSheet: function () {
-      const log = spreadsheet().getSheetByName(LOG_SHEET_NAME);
-      if (!log) {
-        return false;
-      }
-      log.activate();
-      return true;
     },
   };
 

@@ -23,7 +23,7 @@ function fakeBlob(label, bytes, contentType) {
   return blob;
 }
 
-// Pestaña falsa con registro de llamadas a rangos, filas y activación.
+// Pestaña falsa con registro de llamadas a rangos y filas.
 function fakeSheet(id, name, values, hidden = {}, log, maxColumns = 26) {
   return {
     values,
@@ -55,13 +55,6 @@ function fakeSheet(id, name, values, hidden = {}, log, maxColumns = 26) {
         },
       };
     },
-    appendRow(row) {
-      log.push(['appendRow', id, row]);
-      values.push(row);
-    },
-    activate() {
-      log.push(['activate', id]);
-    },
   };
 }
 
@@ -88,13 +81,6 @@ function createGoogleFakes(options = {}) {
   }
   const spreadsheet = {
     getSheets: () => sheets.slice(),
-    getSheetByName: (name) => sheets.find((sheet) => sheet.getName() === name) || null,
-    insertSheet(name) {
-      log.push(['insertSheet', name]);
-      const sheet = fakeSheet(300 + sheets.length, name, [], {}, log);
-      sheets.push(sheet);
-      return sheet;
-    },
   };
 
   const attachmentsCalls = [];
@@ -390,14 +376,6 @@ test('AC-18: lock usa getDocumentLock con tryLock y release llama a releaseLock'
   assert.deepEqual(google.log, [['tryLock', 10000], ['releaseLock']]);
 });
 
-test('R-12: writeStatus usa la columna column + 1 y llama a flush después de escribir', () => {
-  const { google, deps } = setup();
-
-  deps.sheets.writeStatus(101, 3, 1, 'ENVIANDO');
-
-  assert.deepEqual(google.log, [['getRange', 101, 3, 2], ['setValue', 101, 'ENVIANDO'], ['flush']]);
-});
-
 test('AC-41 / D-38: writeCells escribe cada celda en orden, neutraliza fórmulas y hace un solo flush al final', () => {
   const { google, deps } = setup();
   const date = new Date(Date.UTC(2026, 10, 9, 12, 0, 0));
@@ -504,57 +482,6 @@ test('listSheets devuelve id y nombre de cada pestaña', () => {
     { id: 101, name: 'Recipients' },
     { id: 202, name: 'Registro Mail Merge' },
   ]);
-});
-
-test('D-17: appendLog crea la pestaña de registro con LOG_HEADERS una sola vez y agrega filas en orden', () => {
-  const { google, deps } = setup();
-  const date = new Date(Date.UTC(2026, 10, 9));
-  const entry = {
-    date,
-    campaignId: 'camp0001',
-    sheetName: 'Recipients',
-    rowNumber: 2,
-    recipient: 'alpha@example.test',
-    result: 'Email Sent',
-    detail: 'Aceptado por Gmail',
-  };
-
-  deps.sheets.appendLog(entry);
-  deps.sheets.appendLog({ ...entry, rowNumber: 3 });
-
-  const inserts = google.log.filter((call) => call[0] === 'insertSheet');
-  assert.deepEqual(inserts, [['insertSheet', 'Registro Mail Merge']]);
-  const rows = google.log.filter((call) => call[0] === 'appendRow').map((call) => call[2]);
-  assert.equal(rows.length, 3);
-  assert.deepEqual(plain(rows[0]), ['Fecha', 'Campaña', 'Pestaña', 'Fila', 'Destinatario', 'Resultado', 'Detalle']);
-  assert.equal(rows[1][0], date);
-  assert.deepEqual(plain(rows[1].slice(1)), ['camp0001', 'Recipients', 2, 'alpha@example.test', 'Email Sent', 'Aceptado por Gmail']);
-  assert.equal(rows[2][3], 3);
-});
-
-test('AC-26: appendLog neutraliza textos que Sheets interpretaría como fórmula', () => {
-  const { google, deps } = setup({ withLogSheet: true });
-
-  deps.sheets.appendLog({
-    date: new Date(0),
-    campaignId: 'camp0001',
-    sheetName: '=HOJA',
-    rowNumber: 2,
-    recipient: '+1@example.test',
-    result: 'OMITIDA',
-    detail: '-detalle',
-  });
-
-  const row = google.log.find((call) => call[0] === 'appendRow')[2];
-  assert.deepEqual(plain(row.slice(1)), ['camp0001', "'=HOJA", 2, "'+1@example.test", 'OMITIDA', "'-detalle"]);
-});
-
-test('showLogSheet devuelve false sin pestaña de registro y la activa si existe', () => {
-  assert.equal(setup().deps.sheets.showLogSheet(), false);
-
-  const { google, deps } = setup({ withLogSheet: true });
-  assert.equal(deps.sheets.showLogSheet(), true);
-  assert.deepEqual(google.log.pop(), ['activate', 202]);
 });
 
 test('AC-08: drive.getAttachment exporta un nativo con getAs(application/pdf) y nombre .pdf', () => {

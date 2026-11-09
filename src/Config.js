@@ -89,10 +89,10 @@ const LIMITS = {
   MAX_CAMPAIGN_NAME_CHARS: 80,
 };
 
-// Pestaña de registro de la V1 (D-17). Transitorio: la siguen usando `Ui.js` y
-// `Services.js` hasta que el panel V2 la reemplace por las columnas gestionadas.
-const LOG_SHEET_NAME = 'Registro Mail Merge';
-const LOG_HEADERS = ['Fecha', 'Campaña', 'Pestaña', 'Fila', 'Destinatario', 'Resultado', 'Detalle'];
+// Pestaña de registro de la V1 (D-32): el script ya no la escribe ni la borra
+// y no se ofrece como pestaña de campaña. Los resultados viven en las columnas
+// gestionadas de cada fila (D-31).
+const LEGACY_LOG_SHEET_NAME = 'Registro Mail Merge';
 
 // Claves de la configuración de campaña en las propiedades del usuario (D-08,
 // D-39).

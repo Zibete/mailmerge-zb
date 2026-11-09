@@ -148,9 +148,6 @@ test('Camino feliz: consumo del token y por fila claim ENVIANDO → send → Ema
   for (const row of [2, 3, 4]) {
     assert.equal(status(fake, row), 'Email Sent');
   }
-  // V2 no usa writeStatus ni el registro V1.
-  assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(fake.calls.logEntries.length, 0);
 
   // El mensaje real es el de `buildMessage_` (asunto renderizado y adjuntos de la fila).
   assert.equal(fake.calls.sent[0].subject, 'Notice REF-001');

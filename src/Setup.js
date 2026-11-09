@@ -23,7 +23,7 @@ function applyColumnSetup_(deps, expectedHeaderKey) {
   if (!isCompleteConfig_(config)) {
     return {
       ok: false,
-      errors: ['La configuración de la campaña está incompleta; completala en la sección Campaña del panel'],
+      errors: ['La configuración de la campaña está incompleta; completala en la sección "Campaña" del panel'],
       applied: applied,
     };
   }
