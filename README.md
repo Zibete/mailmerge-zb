@@ -20,6 +20,17 @@ Reproduce a small, familiar mail merge workflow using Google Sheets, Gmail draft
 
 Do not run `clasp login`, `clasp push`, `clasp create`, or configure live Google credentials during this assignment. `clasp` is a **future deployment tool**; it does not replace Git and it does not make Apps Script's services run locally.
 
+## Ejecutar las pruebas (Node.js portable)
+Node.js no está instalado en el sistema; se usa la copia portable `C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64` (v20.11.1). El PATH se modifica solo para la sesión de terminal actual, nunca en forma permanente. Desde la raíz del proyecto:
+
+```powershell
+$env:Path = "C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64;$env:Path"
+node --version   # debe mostrar v20.11.1
+node --test      # ejecuta todos los *.test.js, sin red ni credenciales de Google
+```
+
+En Git Bash: `export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH"` y luego `node --test`. El proyecto no tiene dependencias: no hace falta `npm install`.
+
 ## Reading order
 1. `AGENTS.md` — durable engineering contract.
 2. `CLAUDE.md` — Claude Code import/entry point.

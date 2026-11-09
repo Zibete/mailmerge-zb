@@ -16,6 +16,17 @@ Record actual changes in the canonical decision artifacts of `spec-driven-dev`; 
 | Future `clasp` deployment and live OAuth authorization | DEFERRED | Local-only assignment |
 | One executable pure-logic offline test suite with mock Google adapters | ACCEPTANCE REQUIREMENT | Runtime and service behavior can be reviewed without Google credentials |
 
+## Decisiones aprobadas por el usuario (2026-11-08)
+
+| Decisión | Estado | Motivo |
+|---|---|---|
+| La raíz del proyecto es `mailmerge_sdd_local/`, con Git local en la rama `main` y sin remotos | APROBADA | Límite local; los agentes de la skill leen `./CLAUDE.md` |
+| Se conservan `SKIP`, `Email Sent` y los encabezados originales; los estados y marcas nuevos son `ENVIANDO`, `REVISAR` y `[PRUEBA]` (reemplazan a `SENDING`, `REVIEW` y `[TEST]` de los borradores) | APROBADA | Compatibilidad con el complemento e interfaz en español |
+| Un único plan canónico generado por `spec-driven-dev` en `plans/` | APROBADA | Evitar especificaciones paralelas |
+| Todo el desarrollo, la documentación y la interfaz en español; identificadores técnicos en inglés | APROBADA | Requisito del usuario |
+| Node.js portable v20.11.1 (`C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64`), PATH solo por proceso, sin dependencias | APROBADA | No modificar el sistema ni sumar herramientas |
+| Desarrollo y pruebas solo locales: sin despliegues, OAuth ni envíos reales | APROBADA | Ratifica el límite de `AGENTS.md` |
+
 ## Open questions: conservative defaults
 1. **Do operators use a Google Doc as the message source?** Until evidenced otherwise, use Gmail draft as source; do not implement Google Docs editor/import.
 2. **Is `Scheduled Date` actively used?** Do not schedule automatically. If populated, flag/exclude it until a separate approved requirement clarifies desired behavior; do not send early.
