@@ -57,8 +57,10 @@ const LIMITS = {
   // más el texto plano renderizados, antes del claim (D-21).
   MAX_BODY_BYTES: 200 * 1024,
   // 4,5 minutos: por debajo del límite de 6 minutos por ejecución, con margen
-  // para terminar la fila en curso, escribir el registro y mostrar el resumen.
-  // Se mide desde el inicio de la ejecución, antes del diálogo (D-12).
+  // para terminar la fila en curso, escribir su resultado y devolver el
+  // resumen. Se mide desde el inicio de la llamada que envía
+  // (`executeConfirmed_`), porque la confirmación ocurre en otra ejecución
+  // (D-30, reemplaza D-12).
   MAX_RUNTIME_MS: 270000,
   // 10 segundos de espera del lock: suficiente para una ejecución que está
   // por liberarlo, sin dejar al operador esperando ante un envío en curso.
