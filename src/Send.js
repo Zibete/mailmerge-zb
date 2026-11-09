@@ -215,3 +215,291 @@ function appendLogSafe_(deps, entry) {
     return false;
   }
 }
+
+// Textos del envío real. Ninguno incluye cuerpo, asunto renderizado ni URLs.
+const SEND_TEXT_ = {
+  LOCKED: 'Hay otra ejecución en curso; reintentá en unos minutos',
+  CHANGED: 'Cambió después de la confirmación',
+  TEMPLATE_CHANGED:
+    'La plantilla, los encabezados, el remitente o el Reply-To cambiaron después de la confirmación; ' +
+    'no se envió nada. Volvé a validar y confirmar',
+  GLOBAL_ERRORS: 'La validación al momento del envío encontró errores que afectan a toda la campaña; no se envió nada',
+  TIME:
+    'Se alcanzó el tiempo máximo de ejecución; las filas restantes siguen pendientes y se pueden enviar en otra ejecución',
+  QUOTA: 'Se agotó la cuota diaria de envíos de Gmail; las filas restantes siguen pendientes',
+  QUOTA_UNKNOWN: 'No se pudo consultar la cuota diaria de envíos de Gmail; no se enviaron más correos',
+  ACCEPTED: 'Aceptado por Gmail',
+};
+
+// Resultados del registro que no son estados de la hoja.
+const SEND_LOG_RESULT_ = { SKIPPED: 'OMITIDA', NOT_SENT: 'NO ENVIADA' };
+
+/**
+ * Fase A del envío real, sin lock: validación previa completa y lo que el
+ * operador confirma (la clave de la plantilla y la clave de cada fila
+ * válida). Devuelve `{ report, confirmed: { templateKey, rows: Map<rowNumber, key> } }`.
+ * Con errores globales `report.valid` está vacío y no se confirma ninguna fila.
+ */
+function prepareSend_(deps, config) {
+  const report = buildPreflight_(deps, config);
+  const rows = new Map();
+  report.valid.forEach(function (row) {
+    rows.set(row.rowNumber, row.key);
+  });
+  return { report: report, confirmed: { templateKey: report.templateKey, rows: rows } };
+}
+
+// Relee una fila; una falla de lectura se trata como fila distinta (falla
+// cerrado: nunca se envía ni se escribe sobre una fila que no se pudo releer).
+function readRowSafe_(deps, sheetId, rowNumber, width) {
+  try {
+    return deps.sheets.readRow(sheetId, rowNumber, width);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Resumen de una excepción para el registro y el resumen: una sola línea,
+// sin URLs y acotada.
+function summarizeError_(error) {
+  const text = error && error.message ? error.message : String(error);
+  return sanitizeHeaderValue_(text)
+    .replace(/https?:\/\/\S+/gi, '[URL]')
+    .slice(0, 200);
+}
+
+/**
+ * Fase B del envío real (R-09 a R-12, AC-18 a AC-26). Toma el lock, relee
+ * todo desde cero y solo envía las filas idénticas a las confirmadas, con un
+ * checkpoint por fila: `ENVIANDO` → Gmail → verificación de la fila →
+ * `Email Sent`. Cualquier resultado ambiguo deja la fila fuera de los envíos
+ * automáticos (`ENVIANDO` o `REVISAR`) y detiene la ejecución.
+ *
+ * Devuelve `{ campaignId, sent, skipped: [{ rowNumber, reason }],
+ * review: [{ rowNumber, reason }], stoppedReason, logErrors }`. `sent` cuenta
+ * los correos que Gmail aceptó (D-13), incluidos los que quedaron para
+ * revisión porque no se pudo registrar el éxito.
+ */
+function executeSend_(deps, config, prepared, startedAt) {
+  const result = { campaignId: '', sent: 0, skipped: [], review: [], stoppedReason: '', logErrors: 0 };
+
+  let locked = false;
+  try {
+    locked = Boolean(deps.lock.tryLock(LIMITS.LOCK_WAIT_MS));
+  } catch (e) {
+    locked = false;
+  }
+  if (!locked) {
+    result.stoppedReason = SEND_TEXT_.LOCKED;
+    return result;
+  }
+
+  try {
+    sendConfirmedRows_(deps, config, prepared, startedAt, result);
+  } finally {
+    deps.lock.release();
+  }
+  return result;
+}
+
+// Cuerpo de la Fase B, dentro del lock. Completa `result` en el lugar.
+function sendConfirmedRows_(deps, config, prepared, startedAt, result) {
+  const report = buildPreflight_(deps, config);
+  if (report.globalErrors.length > 0) {
+    result.stoppedReason =
+      SEND_TEXT_.GLOBAL_ERRORS + ': ' + report.globalErrors.map(sanitizeHeaderValue_).join('; ');
+    return;
+  }
+  if (report.templateKey !== prepared.confirmed.templateKey) {
+    result.stoppedReason = SEND_TEXT_.TEMPLATE_CHANGED;
+    return;
+  }
+  result.campaignId = deps.ids.newCampaignId();
+
+  const sheetId = report.sheet.id;
+  const statusColumn = report.headers.columns.status;
+  const current = {};
+  report.valid.forEach(function (row) {
+    current[row.rowNumber] = row;
+  });
+  const confirmedEmails = {};
+  ((prepared.report && prepared.report.valid) || []).forEach(function (row) {
+    confirmedEmails[row.rowNumber] = row.email;
+  });
+  let quota = report.quotaRemaining;
+
+  function log(rowNumber, recipient, logResult, detail) {
+    const logged = appendLogSafe_(deps, {
+      date: new Date(deps.clock.now()),
+      campaignId: result.campaignId,
+      sheetName: report.sheet.name,
+      rowNumber: rowNumber,
+      recipient: recipient,
+      result: logResult,
+      detail: detail,
+    });
+    if (!logged) {
+      result.logErrors++;
+    }
+  }
+
+  function skip(rowNumber, recipient, reason) {
+    result.skipped.push({ rowNumber: rowNumber, reason: reason });
+    log(rowNumber, recipient, SEND_LOG_RESULT_.SKIPPED, reason);
+  }
+
+  const rowNumbers = Array.from(prepared.confirmed.rows.keys()).sort(function (a, b) {
+    return a - b;
+  });
+
+  for (let i = 0; i < rowNumbers.length; i++) {
+    const rowNumber = rowNumbers[i];
+    const confirmedKey = prepared.confirmed.rows.get(rowNumber);
+    const confirmedEmail = confirmedEmails[rowNumber] || '';
+
+    // Paso 3: corte por tiempo o cuota (AC-22); el resto queda sin tocar.
+    if (deps.clock.now() - startedAt > LIMITS.MAX_RUNTIME_MS) {
+      result.stoppedReason = SEND_TEXT_.TIME;
+      break;
+    }
+    if (typeof quota !== 'number' || !isFinite(quota)) {
+      result.stoppedReason = SEND_TEXT_.QUOTA_UNKNOWN;
+      break;
+    }
+    if (quota <= 0) {
+      result.stoppedReason = SEND_TEXT_.QUOTA;
+      break;
+    }
+
+    // Paso 3: la fila debe seguir válida y con la misma clave (AC-23 a AC-25).
+    const row = current[rowNumber];
+    if (!row || row.key !== confirmedKey) {
+      skip(rowNumber, confirmedEmail, SEND_TEXT_.CHANGED);
+      continue;
+    }
+
+    // Paso 4: relectura de la fila (ediciones durante el recorrido).
+    const live = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
+    if (!live || rowKey_(live) !== confirmedKey) {
+      skip(rowNumber, confirmedEmail, SEND_TEXT_.CHANGED);
+      continue;
+    }
+
+    // Paso 5: armado completo, adjuntos incluidos, antes del claim.
+    const built = buildMessage_(deps, report.templateData, { rowNumber: rowNumber, values: row.values }, report.headers, config);
+    if (!built.ok) {
+      skip(rowNumber, confirmedEmail, built.errors.map(sanitizeHeaderValue_).join('; '));
+      continue;
+    }
+    const recipient = built.message.to;
+
+    // Paso 6: claim ENVIANDO.
+    try {
+      deps.sheets.writeStatus(sheetId, rowNumber, statusColumn, STATUS.SENDING);
+    } catch (e) {
+      const reason =
+        'No se pudo marcar ' + STATUS.SENDING + ' y no se envió el correo; revisá el estado de la fila antes de reintentar';
+      result.review.push({ rowNumber: rowNumber, reason: reason });
+      log(rowNumber, recipient, SEND_LOG_RESULT_.NOT_SENT, reason);
+      result.stoppedReason = 'No se pudo escribir el estado de la fila ' + rowNumber + '; el envío se detuvo';
+      break;
+    }
+
+    // Paso 7: Gmail. Una excepción es ambigua: REVISAR y fin (D-16, AC-21).
+    try {
+      deps.gmail.send(built.message);
+    } catch (e) {
+      let marked = true;
+      try {
+        deps.sheets.writeStatus(sheetId, rowNumber, statusColumn, STATUS.REVIEW);
+      } catch (e2) {
+        marked = false;
+      }
+      const reason =
+        'Gmail lanzó una excepción (' + summarizeError_(e) + '); la fila quedó ' +
+        (marked ? STATUS.REVIEW : STATUS.SENDING) +
+        '. Revisá la carpeta Enviados antes de cambiar su estado';
+      result.review.push({ rowNumber: rowNumber, reason: reason });
+      log(rowNumber, recipient, STATUS.REVIEW, reason);
+      result.stoppedReason = 'Gmail no aceptó un envío; la ejecución se detuvo para no seguir intentando';
+      break;
+    }
+    result.sent++;
+    quota--;
+
+    // Paso 8: la fila sigue en su lugar (misma clave con ENVIANDO).
+    const expected = row.values.slice();
+    expected[statusColumn] = STATUS.SENDING;
+    const after = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
+    if (!after || rowKey_(after) !== rowKey_(expected)) {
+      result.review.push({
+        rowNumber: rowNumber,
+        reason:
+          'REVISAR: la fila cambió de posición durante el envío; Gmail aceptó el correo, pero no se escribió ' +
+          STATUS.SENT + '. Buscá la fila en ' + STATUS.SENDING + ' y reconciliala a mano',
+      });
+      log(rowNumber, recipient, STATUS.REVIEW, 'La fila cambió de posición durante el envío; Gmail aceptó el correo');
+      result.stoppedReason = 'La hoja cambió de estructura durante el envío; la ejecución se detuvo';
+      break;
+    }
+
+    // Paso 8: éxito. Si la escritura falla, la fila queda ENVIANDO (AC-20).
+    try {
+      deps.sheets.writeStatus(sheetId, rowNumber, statusColumn, STATUS.SENT);
+    } catch (e) {
+      const reason =
+        'Gmail aceptó el correo, pero no se pudo escribir ' + STATUS.SENT + '; la fila quedó ' + STATUS.SENDING;
+      result.review.push({ rowNumber: rowNumber, reason: reason });
+      log(rowNumber, recipient, STATUS.SENDING, reason);
+      result.stoppedReason = 'No se pudo registrar un envío en la hoja; la ejecución se detuvo';
+      break;
+    }
+
+    // Paso 9: registro del resultado.
+    log(rowNumber, recipient, STATUS.SENT, SEND_TEXT_.ACCEPTED);
+  }
+}
+
+/**
+ * Resumen del envío real en español, para `Ui.alert`. Informa los correos
+ * aceptados por Gmail (D-13: aceptados, no entregados), las filas omitidas y
+ * las que requieren revisión manual con su motivo, el motivo de corte y las
+ * fallas del registro (D-18).
+ */
+function formatSendSummary_(result) {
+  const sent = result.sent || 0;
+  const skipped = result.skipped || [];
+  const review = result.review || [];
+  const lines = [
+    'Campaña: ' + (result.campaignId ? sanitizeHeaderValue_(result.campaignId) : '(no se inició)'),
+    sent === 1 ? '1 correo aceptado por Gmail' : sent + ' correos aceptados por Gmail',
+  ];
+
+  function listRows(title, rows) {
+    lines.push('', title + ': ' + rows.length);
+    rows.slice(0, REPORT_ROW_LIMIT_).forEach(function (row) {
+      lines.push('Fila ' + row.rowNumber + ': ' + sanitizeHeaderValue_(row.reason));
+    });
+    moreRowsLine_(rows.length, REPORT_ROW_LIMIT_).forEach(function (line) {
+      lines.push(line);
+    });
+  }
+
+  if (skipped.length > 0) {
+    listRows('Filas omitidas (no se enviaron)', skipped);
+  }
+  if (review.length > 0) {
+    listRows('Filas para revisión manual (revisá la carpeta Enviados de Gmail antes de cambiar su estado)', review);
+  }
+  if (result.stoppedReason) {
+    lines.push('', 'El envío se detuvo: ' + sanitizeHeaderValue_(result.stoppedReason));
+  }
+  if (result.logErrors > 0) {
+    lines.push(
+      '',
+      'Atención: no se pudieron escribir ' + result.logErrors +
+        ' entradas del registro; el estado de la hoja sigue siendo la referencia'
+    );
+  }
+  return lines.join('\n');
+}
