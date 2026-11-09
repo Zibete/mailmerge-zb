@@ -87,6 +87,25 @@ function createServices_() {
       SpreadsheetApp.flush();
     },
 
+    // Escribe celdas de la fila 1 (`column` 0-based) para "Preparar columnas"
+    // (D-33). Si alguna cae más allá de las columnas de la hoja, inserta las
+    // que faltan al final una sola vez; un `flush` final persiste el cambio.
+    writeHeaderCells: function (sheetId, cells) {
+      const sheet = requireSheet(sheetId);
+      const maxColumns = sheet.getMaxColumns();
+      let neededColumns = 0;
+      cells.forEach(function (cell) {
+        neededColumns = Math.max(neededColumns, cell.column + 1);
+      });
+      if (neededColumns > maxColumns) {
+        sheet.insertColumnsAfter(maxColumns, neededColumns - maxColumns);
+      }
+      cells.forEach(function (cell) {
+        sheet.getRange(1, cell.column + 1).setValue(cell.value);
+      });
+      SpreadsheetApp.flush();
+    },
+
     // Crea la pestaña de registro al primer uso (D-17) y agrega una fila en
     // el orden de `LOG_HEADERS`.
     appendLog: function (entry) {

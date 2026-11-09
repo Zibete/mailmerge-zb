@@ -23,9 +23,14 @@ function fakeBlob(label, bytes, contentType) {
 }
 
 // Pestaña falsa con registro de llamadas a rangos, filas y activación.
-function fakeSheet(id, name, values, hidden = {}, log) {
+function fakeSheet(id, name, values, hidden = {}, log, maxColumns = 26) {
   return {
     values,
+    getMaxColumns: () => maxColumns,
+    insertColumnsAfter(afterPosition, howMany) {
+      log.push(['insertColumnsAfter', id, afterPosition, howMany]);
+      maxColumns += howMany;
+    },
     getSheetId: () => id,
     getName: () => name,
     getDataRange: () => ({ getDisplayValues: () => values.map((row) => row.slice()) }),
@@ -73,7 +78,8 @@ function createGoogleFakes(options = {}) {
         ['gamma@example.test', ''],
       ],
       { user: [3], filter: [4] },
-      log
+      log,
+      options.maxColumns
     ),
   ];
   if (options.withLogSheet) {
@@ -293,6 +299,41 @@ test('R-12: writeStatus usa la columna column + 1 y llama a flush después de es
   deps.sheets.writeStatus(101, 3, 1, 'ENVIANDO');
 
   assert.deepEqual(google.log, [['getRange', 101, 3, 2], ['setValue', 101, 'ENVIANDO'], ['flush']]);
+});
+
+test('D-33: writeHeaderCells inserta las columnas que faltan una sola vez, escribe en la fila 1 y hace un solo flush', () => {
+  const { google, deps } = setup({ maxColumns: 6 });
+
+  deps.sheets.writeHeaderCells(101, [
+    { column: 6, value: 'Campaña' },
+    { column: 7, value: 'Detalle' },
+  ]);
+
+  assert.deepEqual(google.log, [
+    ['insertColumnsAfter', 101, 6, 2],
+    ['getRange', 101, 1, 7],
+    ['setValue', 101, 'Campaña'],
+    ['getRange', 101, 1, 8],
+    ['setValue', 101, 'Detalle'],
+    ['flush'],
+  ]);
+});
+
+test('D-33: writeHeaderCells no inserta columnas si alcanzan las existentes', () => {
+  const { google, deps } = setup({ maxColumns: 8 });
+
+  deps.sheets.writeHeaderCells(101, [
+    { column: 1, value: 'Resultado' },
+    { column: 7, value: 'Detalle' },
+  ]);
+
+  assert.deepEqual(google.log, [
+    ['getRange', 101, 1, 2],
+    ['setValue', 101, 'Resultado'],
+    ['getRange', 101, 1, 8],
+    ['setValue', 101, 'Detalle'],
+    ['flush'],
+  ]);
 });
 
 test('AC-11: readSheet lee valores mostrados y filas ocultas por fila (índice 0 = false)', () => {

@@ -39,6 +39,8 @@ function createFakeDeps(fixture, options = {}) {
     // Llamadas de lectura a Drive (para verificar que no haya llamadas extra).
     driveCalls: [],
     configWrites: [],
+    // Celdas de encabezado escritas por `writeHeaderCells` (migración).
+    headerWrites: [],
   };
 
   function findSheet(sheetId) {
@@ -119,6 +121,31 @@ function createFakeDeps(fixture, options = {}) {
       if (fails) {
         throw new Error('Falso: falla después de escribir el estado');
       }
+    },
+    // Escribe celdas de la fila 1 en el orden dado. Una columna más allá del
+    // ancho actual extiende todas las filas con '' (simula
+    // `insertColumnsAfter`). `failOn.writeHeaderCells = { afterCells: N }`
+    // lanza después de escribir las primeras N celdas (N = 0: antes de
+    // escribir), para simular una migración parcial.
+    writeHeaderCells(sheetId, cells) {
+      const rule = failOn.writeHeaderCells;
+      const sheet = requireSheet(sheetId);
+      cells.forEach((cell, index) => {
+        if (rule && index >= (rule.afterCells || 0)) {
+          throw new Error('Falso: falla al escribir los encabezados');
+        }
+        const width = Math.max(...sheet.values.map((row) => row.length));
+        if (cell.column >= width) {
+          for (const row of sheet.values) {
+            while (row.length <= cell.column) {
+              row.push('');
+            }
+          }
+        }
+        sheet.values[0][cell.column] = cell.value;
+        calls.headerWrites.push({ sheetId, column: cell.column, value: cell.value });
+        calls.sequence.push({ type: 'writeHeaderCells', column: cell.column, value: cell.value });
+      });
     },
     appendLog(entry) {
       if (matchesFailure(failOn.appendLog, entry)) {

@@ -153,9 +153,62 @@ function createCampaignFixture() {
   };
 }
 
+// Encabezados de la V1, que la migración ("Preparar columnas") transforma en
+// los V2 (D-33).
+const LEGACY_HEADER_ROW = [
+  'Email Address',
+  'First Name',
+  'Reference',
+  'File Attachments',
+  'Mail Merge Status',
+  'Scheduled Date',
+];
+
+// Arma una fila en el orden de `LEGACY_HEADER_ROW` a partir de un objeto por
+// encabezado.
+function buildLegacyRow(valuesByHeader = {}) {
+  return LEGACY_HEADER_ROW.map((header) => {
+    const value = valuesByHeader[header];
+    return value === undefined || value === null ? '' : String(value);
+  });
+}
+
+// El mismo fixture con los encabezados V1 y una fila más ya enviada en la V1
+// (`Mail Merge Status = Email Sent` y `Scheduled Date` con valor). Esa fila no
+// bloquea la migración: tiene estado (D-34 c).
+function createLegacyFixture() {
+  const fixture = createCampaignFixture();
+  const sheet = fixture.sheets.find((item) => item.id === CAMPAIGN_SHEET_ID);
+  const current = sheet.values;
+  const legacyValues = [LEGACY_HEADER_ROW.slice()];
+  for (let i = 1; i < current.length; i++) {
+    const byHeader = {};
+    HEADER_ROW.forEach((header, index) => {
+      byHeader[header] = current[i][index];
+    });
+    legacyValues.push(buildLegacyRow(byHeader));
+  }
+  legacyValues.push(
+    buildLegacyRow({
+      'Email Address': 'delta@example.test',
+      'First Name': 'Delta',
+      Reference: 'REF-004',
+      'Mail Merge Status': 'Email Sent',
+      'Scheduled Date': '2026-10-01 09:00',
+    })
+  );
+  sheet.values = legacyValues;
+  sheet.hiddenByUser = legacyValues.map(() => false);
+  sheet.hiddenByFilter = legacyValues.map(() => false);
+  return fixture;
+}
+
 module.exports = {
   createCampaignFixture,
+  createLegacyFixture,
   buildRow,
+  buildLegacyRow,
+  LEGACY_HEADER_ROW,
   fileLink,
   openLink,
   docLink,
