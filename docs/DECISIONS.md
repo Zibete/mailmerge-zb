@@ -26,6 +26,9 @@ Record actual changes in the canonical decision artifacts of `spec-driven-dev`; 
 | Todo el desarrollo, la documentación y la interfaz en español; identificadores técnicos en inglés | APROBADA | Requisito del usuario |
 | Node.js portable v20.11.1 (`C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64`), PATH solo por proceso, sin dependencias | APROBADA | No modificar el sistema ni sumar herramientas |
 | Desarrollo y pruebas solo locales: sin despliegues, OAuth ni envíos reales | APROBADA | Ratifica el límite de `AGENTS.md` |
+| Confirmación con `Ui.alert` fuera del lock; después del "Sí" se toma el lock, se relee y revalida todo y solo se envían filas idénticas a las confirmadas | APROBADA (2026-11-09) | `Ui.alert` suspende la ejecución y no se asume que el lock se conserve; evita carreras y duplicados (plan, "Enfoque" punto 3) |
+| La validación y la confirmación muestran, por fila, destinatario y nombres de adjuntos (nunca URLs), hasta 20 filas y luego `y N filas más`, más los adjuntos comunes | APROBADA (2026-11-09) | Mitiga que un editor del Sheet combine un archivo privado con una dirección externa sin que el operador lo vea (plan, D-23) |
+| Scopes `https://mail.google.com/` y `drive.readonly` | RIESGO ACEPTADO SOLO PARA DESARROLLO LOCAL (2026-11-09) | Son amplios y restringidos, pero son la combinación mínima documentada para `GmailApp`/`DriveApp`. **Pendiente de autorización explícita y validación en vivo antes de cualquier uso real** (plan, D-24) |
 
 ## Open questions: conservative defaults
 1. **Do operators use a Google Doc as the message source?** Until evidenced otherwise, use Gmail draft as source; do not implement Google Docs editor/import.
