@@ -10,10 +10,14 @@
  */
 
 // Prefijos que Sheets interpreta como fórmula al escribir texto con
-// `appendRow`; en el registro se fuerzan a texto con un apóstrofo inicial.
+// `setValue` o `appendRow`; se fuerzan a texto con un apóstrofo inicial
+// (D-38, AC-26).
 const FORMULA_PREFIXES_ = ['=', '+', '-', '@'];
 
-function asLogCell_(value) {
+// Valor seguro para escribir en una celda: un texto que empieza con un prefijo
+// de fórmula se escribe precedido por `'`; las `Date`, los números y el resto
+// de los valores pasan sin cambios.
+function asSheetValue_(value) {
   if (typeof value === 'string' && value !== '' && FORMULA_PREFIXES_.indexOf(value.charAt(0)) !== -1) {
     return "'" + value;
   }
@@ -87,6 +91,17 @@ function createServices_() {
       SpreadsheetApp.flush();
     },
 
+    // Escribe celdas de una fila de datos (`column` 0-based) en el orden dado,
+    // con los textos neutralizados (D-37, D-38). Un único `flush` al final
+    // persiste toda la transición antes de seguir.
+    writeCells: function (sheetId, rowNumber, cells) {
+      const sheet = requireSheet(sheetId);
+      cells.forEach(function (cell) {
+        sheet.getRange(rowNumber, cell.column + 1).setValue(asSheetValue_(cell.value));
+      });
+      SpreadsheetApp.flush();
+    },
+
     // Escribe celdas de la fila 1 (`column` 0-based) para "Preparar columnas"
     // (D-33). Si alguna cae más allá de las columnas de la hoja, inserta las
     // que faltan al final una sola vez; un `flush` final persiste el cambio.
@@ -124,7 +139,7 @@ function createServices_() {
           entry.recipient,
           entry.result,
           entry.detail,
-        ].map(asLogCell_)
+        ].map(asSheetValue_)
       );
     },
 

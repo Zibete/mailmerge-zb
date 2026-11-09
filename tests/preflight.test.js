@@ -7,15 +7,16 @@ const { loadAppsScript, plain } = require('./helpers/load-apps-script');
 const { createFakeDeps } = require('./helpers/fakes');
 const {
   createCampaignFixture,
+  createLegacyFixture,
   buildRow,
   fileLink,
   DRIVE_IDS,
   ALIAS_EMAIL,
 } = require('./fixtures/campaign');
 
-function setup(options) {
+function setup(options, createFixture = createCampaignFixture) {
   const ctx = loadAppsScript();
-  const fixture = createCampaignFixture();
+  const fixture = createFixture();
   const fake = createFakeDeps(fixture, options);
   return { ctx, fixture, fake };
 }
@@ -28,10 +29,11 @@ function invalidRow(report, rowNumber) {
   return report.invalid.find((row) => row.rowNumber === rowNumber);
 }
 
+// AC-27: la validación nunca envía ni escribe celdas de datos ni encabezados.
 function assertNoSideEffects(fake) {
   assert.equal(fake.calls.sent.length, 0);
-  assert.equal(fake.calls.statusWrites.length, 0);
-  assert.equal(fake.calls.logEntries.length, 0);
+  assert.equal(fake.calls.cellWrites.length, 0);
+  assert.equal(fake.calls.headerWrites.length, 0);
 }
 
 test('AC-27: buildPreflight_ es de solo lectura y devuelve las filas elegibles', () => {
@@ -58,7 +60,7 @@ test('AC-27: buildPreflight_ es de solo lectura y devuelve las filas elegibles',
 
   const alpha = report.valid[0];
   assert.equal(alpha.email, 'alpha@example.test');
-  assert.equal(alpha.key, ctx.rowKey_(fixture.sheets[0].values[1]));
+  assert.equal(alpha.key, ctx.rowKey_(fixture.sheets[0].values[1], report.headers.columns));
   assert.deepEqual(plain(alpha.values), plain(fixture.sheets[0].values[1]));
 });
 
@@ -184,7 +186,10 @@ test('R-02: configuración incompleta, pestaña borrada o borrador borrado son e
 
   const incomplete = ctx.buildPreflight_(fake.deps, { ...fixture.config, draftId: '' });
   assert.equal(incomplete.ok, false);
-  assert.ok(incomplete.globalErrors.some((e) => e.includes('configuración de la campaña está incompleta')));
+  const incompleteError = incomplete.globalErrors.find((e) => e.includes('configuración de la campaña está incompleta'));
+  assert.ok(incompleteError);
+  assert.ok(incompleteError.includes('sección "Campaña"'));
+  assert.ok(!incompleteError.includes('Configurar campaña'));
   const missingConfig = ctx.buildPreflight_(fake.deps, null);
   assert.equal(missingConfig.ok, false);
 
@@ -240,70 +245,282 @@ test('D-23: attachmentNames sigue el orden de la celda sin llamadas extra a Driv
   ]);
 });
 
-test('D-23: formatRowReview_ muestra adjuntos comunes y destinatario con nombres, sin URLs ni IDs', () => {
+test('AC-45 / D-35: con encabezados V1 la validación da error global y devuelve el plan de columnas', () => {
+  const { ctx, fixture, fake } = setup(undefined, createLegacyFixture);
+  const report = ctx.buildPreflight_(fake.deps, fixture.config);
+
+  assert.equal(report.ok, false);
+  assert.ok(
+    report.globalErrors.includes('La pestaña tiene encabezados de la versión anterior; usá "Preparar columnas"')
+  );
+  assert.equal(report.valid.length, 0);
+  assert.equal(report.setup.needed, true);
+  assert.equal(report.setup.headerKey, JSON.stringify(fixture.sheets[0].values[0]));
+  assert.deepEqual(plain(report.setup.renames), [
+    { column: 4, from: 'Mail Merge Status', to: 'Resultado' },
+    { column: 5, from: 'Scheduled Date', to: 'Fecha' },
+  ]);
+  assert.deepEqual(plain(report.setup.appends), [
+    { column: 6, name: 'Campaña' },
+    { column: 7, name: 'Detalle' },
+  ]);
+  assert.deepEqual(plain(report.setup.errors), []);
+  assertNoSideEffects(fake);
+});
+
+test('D-35: una pestaña V2 a la que le falta una columna gestionada devuelve el plan con el agregado', () => {
+  const { ctx, fixture, fake } = setup();
+  // Sin `Detalle` (última columna del fixture).
+  fixture.sheets[0].values = fixture.sheets[0].values.map((row) => row.slice(0, 7));
+  const report = ctx.buildPreflight_(fake.deps, fixture.config);
+
+  assert.equal(report.ok, false);
+  assert.ok(report.globalErrors.includes('Falta el encabezado requerido "Detalle" en la fila 1.'));
+  assert.equal(report.setup.needed, true);
+  assert.deepEqual(plain(report.setup.renames), []);
+  assert.deepEqual(plain(report.setup.appends), [{ column: 7, name: 'Detalle' }]);
+  assertNoSideEffects(fake);
+});
+
+test('D-35: una pestaña V2 completa no necesita plan de columnas (setup null)', () => {
+  const { ctx, fixture, fake } = setup();
+  const report = ctx.buildPreflight_(fake.deps, fixture.config);
+  assert.equal(report.ok, true);
+  assert.equal(report.setup, null);
+
+  // Con otros errores globales (sin cuenta) tampoco hay plan.
+  const noAccount = setup({ userEmail: '' });
+  assert.equal(noAccount.ctx.buildPreflight_(noAccount.fake.deps, noAccount.fixture.config).setup, null);
+});
+
+test('AC-45 / D-35: un marcador de columna gestionada es error global exacto en asunto, texto plano o HTML', () => {
+  const cases = [
+    [{ subject: 'Notice {{Resultado}}' }, ['Resultado']],
+    [{ plainBody: 'Hello {{Fecha}}' }, ['Fecha']],
+    [{ htmlBody: '<p>{{Detalle}}</p><img src="cid:logo" alt="logo.png">' }, ['Detalle']],
+    [{ subject: '{{Campaña}} {{Reference}}', plainBody: 'Hello {{Campaña}} {{Fecha}}' }, ['Campaña', 'Fecha']],
+  ];
+  for (const [patch, names] of cases) {
+    const { ctx, fixture, fake } = setup();
+    fake.setTemplate(patch);
+    const report = ctx.buildPreflight_(fake.deps, fixture.config);
+
+    assert.equal(report.ok, false);
+    assert.deepEqual(
+      plain(report.globalErrors),
+      names.map((name) => 'La columna "' + name + '" la escribe Mail Merge y no se puede usar como marcador')
+    );
+    assert.equal(report.valid.length, 0);
+    assertNoSideEffects(fake);
+  }
+});
+
+const VALIDATION_VIEW_KEYS = [
+  'ok',
+  'globalErrors',
+  'setup',
+  'sheetName',
+  'subject',
+  'from',
+  'replyTo',
+  'quotaRemaining',
+  'counts',
+  'excludedByReason',
+  'commonAttachments',
+  'rows',
+  'moreRows',
+  'invalidRows',
+  'moreInvalid',
+  'overwriteRows',
+].sort();
+
+test('AC-33 / D-42: buildValidationView_ lista todas las filas válidas con destinatario y adjuntos, sin URLs ni IDs', () => {
   const { ctx, fixture, fake } = setup();
   fixture.drive.files[DRIVE_IDS.PDF_ALPHA].name = 'alpha\nnotice.pdf';
+  for (let i = 0; i < 22; i++) {
+    fake.appendRow(buildRow({ 'Email Address': 'row' + i + '@example.test', 'First Name': 'N', Reference: 'R' }));
+  }
+  const invalidRowNumber = fake.appendRow(
+    buildRow({ 'Email Address': 'not-an-email', 'First Name': 'N', Reference: 'R' })
+  );
+  const skipRowNumber = fake.appendRow(buildRow({ 'Email Address': 'skip@example.test', Resultado: 'SKIP' }));
+  const hiddenRowNumber = fake.appendRow(
+    buildRow({ 'Email Address': 'hidden@example.test', 'First Name': 'N', Reference: 'R' })
+  );
+  fixture.sheets[0].hiddenByUser[hiddenRowNumber - 1] = true;
   const report = ctx.buildPreflight_(fake.deps, fixture.config);
-  const text = ctx.formatRowReview_(report);
-  const lines = text.split('\n');
+  const view = ctx.buildValidationView_(report);
 
-  assert.equal(lines[0], 'Adjuntos comunes: common-terms.pdf');
-  assert.equal(lines[1], 'Fila 2 → alpha@example.test: alpha notice.pdf, Alpha Letter');
-  assert.equal(lines[2], 'Fila 3 → beta@example.test: beta-notice.pdf');
-  assert.equal(lines[3], 'Fila 4 → gamma@example.test (sin adjuntos propios)');
-  assert.equal(lines.length, 4);
+  assertNoSideEffects(fake);
+  assert.deepEqual(plain(view), JSON.parse(JSON.stringify(view)));
+  assert.deepEqual(Object.keys(view).sort(), VALIDATION_VIEW_KEYS);
+  assert.equal(view.ok, true);
+  assert.deepEqual(plain(view.globalErrors), []);
+  assert.equal(view.setup, null);
+  assert.equal(view.sheetName, 'Recipients');
+  assert.equal(view.subject, 'Notice {{Reference}}');
+  assert.equal(view.from, 'operator@example.test');
+  assert.equal(view.replyTo, '');
+  assert.equal(view.quotaRemaining, 100);
+  assert.deepEqual(plain(view.counts), { valid: 25, invalid: 1, excluded: 2 });
+  assert.deepEqual(plain(view.excludedByReason), [
+    { reason: 'resultado: SKIP', count: 1 },
+    { reason: 'oculta por el usuario', count: 1 },
+  ]);
+  assert.ok(skipRowNumber < hiddenRowNumber);
+  assert.deepEqual(plain(view.commonAttachments), ['common-terms.pdf']);
+
+  // Las 25 filas, sin corte en 20, en orden ascendente.
+  assert.equal(view.rows.length, 25);
+  assert.equal(view.moreRows, 0);
+  assert.deepEqual(
+    plain(view.rows.map((row) => row.rowNumber)),
+    Array.from({ length: 25 }, (_, i) => i + 2)
+  );
+  assert.deepEqual(plain(view.rows.slice(0, 3)), [
+    { rowNumber: 2, email: 'alpha@example.test', attachmentNames: ['alpha notice.pdf', 'Alpha Letter'] },
+    { rowNumber: 3, email: 'beta@example.test', attachmentNames: ['beta-notice.pdf'] },
+    { rowNumber: 4, email: 'gamma@example.test', attachmentNames: [] },
+  ]);
+  assert.deepEqual(plain(view.rows[24]), { rowNumber: 26, email: 'row21@example.test', attachmentNames: [] });
+
+  assert.deepEqual(plain(view.invalidRows), [
+    {
+      rowNumber: invalidRowNumber,
+      reasons: ['La dirección de Email Address no es válida (debe ser una sola dirección, sin espacios)'],
+    },
+  ]);
+  assert.equal(view.moreInvalid, 0);
+  assert.deepEqual(plain(view.overwriteRows), []);
+
+  const text = JSON.stringify(view);
   assert.ok(!text.includes('drive.google.com'));
   assert.ok(!text.includes('docs.google.com'));
   for (const id of Object.values(DRIVE_IDS)) {
     assert.ok(!text.includes(id));
   }
-  // Ningún valor de otras columnas.
-  assert.ok(!text.includes('REF-001') && !text.includes('Alpha,'));
+  // Ningún valor de otras columnas ni saltos de línea.
+  assert.ok(!text.includes('REF-001') && !text.includes('"Alpha"'));
+  assert.ok(!text.includes('\\n'));
 });
 
-test('D-23: formatRowReview_ muestra 20 filas y luego "y N filas más"', () => {
-  const { ctx, fixture, fake } = setup();
-  fake.setTemplate({ attachments: [] });
-  for (let i = 0; i < 22; i++) {
-    fake.appendRow(buildRow({ 'Email Address': 'row' + i + '@example.test', 'First Name': 'N', Reference: 'R' }));
-  }
-  const report = ctx.buildPreflight_(fake.deps, fixture.config);
-  assert.equal(report.valid.length, 25);
-  const lines = ctx.formatRowReview_(report).split('\n');
+test('AC-33 / D-42: buildValidationView_ con errores globales trae el plan y ninguna fila', () => {
+  const { ctx, fixture, fake } = setup(undefined, createLegacyFixture);
+  fake.deps.quota.remaining = () => {
+    throw new Error('Falso: cuota no disponible');
+  };
+  const view = ctx.buildValidationView_(ctx.buildPreflight_(fake.deps, fixture.config));
 
-  assert.equal(lines[0], 'Adjuntos comunes: ninguno');
-  assert.equal(lines.filter((line) => /^Fila \d+ → /.test(line)).length, 20);
-  assert.equal(lines[lines.length - 1], 'y 5 filas más');
-  assert.equal(ctx.formatRowReview_(report, 30).split('\n').length, 26);
-});
-
-test('formatPreflightReport_ resume la campaña y limita las filas inválidas a 20', () => {
-  const { ctx, fixture, fake } = setup();
-  for (let i = 0; i < 25; i++) {
-    fake.appendRow(buildRow({ 'Email Address': 'not-an-email-' + i, 'First Name': 'N', Reference: 'R' }));
-  }
-  fake.appendRow(buildRow({ 'Email Address': 'skip@example.test', Resultado: 'SKIP' }));
-  const report = ctx.buildPreflight_(fake.deps, fixture.config);
-  assert.equal(report.invalid.length, 25);
-  const text = ctx.formatPreflightReport_(report);
-
-  assert.ok(text.includes('Pestaña: Recipients'));
-  assert.ok(text.includes('Notice {{Reference}}'));
-  assert.ok(text.includes('Remitente: operator@example.test'));
-  assert.ok(text.includes('Filas válidas: 3'));
-  assert.ok(text.includes('Filas inválidas: 25'));
-  assert.ok(text.includes('Filas excluidas: 1'));
-  assert.ok(text.includes('resultado: SKIP: 1'));
-  assert.ok(text.includes('Cuota diaria disponible: 100'));
-  assert.ok(text.includes(ctx.formatRowReview_(report)));
-  assert.equal(text.split('\n').filter((line) => /^Fila \d+: /.test(line)).length, 20);
-  assert.ok(text.includes('y 5 filas más'));
+  assert.deepEqual(plain(view), JSON.parse(JSON.stringify(view)));
+  assert.deepEqual(Object.keys(view).sort(), VALIDATION_VIEW_KEYS);
+  assert.equal(view.ok, false);
+  assert.ok(view.globalErrors.includes('La pestaña tiene encabezados de la versión anterior; usá "Preparar columnas"'));
+  assert.equal(view.setup.needed, true);
+  assert.equal(view.setup.headerKey, JSON.stringify(fixture.sheets[0].values[0]));
+  assert.equal(view.setup.appends.length, 2);
+  assert.equal(view.quotaRemaining, null);
+  assert.deepEqual(plain(view.counts), { valid: 0, invalid: 0, excluded: 0 });
+  assert.deepEqual(plain(view.rows), []);
+  assert.deepEqual(plain(view.invalidRows), []);
+  assert.deepEqual(plain(view.overwriteRows), []);
   assertNoSideEffects(fake);
 });
 
-test('formatPreflightReport_ muestra los errores globales', () => {
-  const { ctx, fixture, fake } = setup({ userEmail: '' });
+test('D-41 / D-42: con MAX_CONFIRM_ROWS reducido, rows e invalidRows se cortan y moreRows / moreInvalid cuentan el resto', () => {
+  const { ctx, fixture, fake } = setup();
+  vm.runInContext('LIMITS.MAX_CONFIRM_ROWS = 2', ctx);
+  for (let i = 0; i < 3; i++) {
+    fake.appendRow(buildRow({ 'Email Address': 'not-an-email-' + i, 'First Name': 'N', Reference: 'R' }));
+  }
   const report = ctx.buildPreflight_(fake.deps, fixture.config);
-  const text = ctx.formatPreflightReport_(report);
-  assert.ok(text.includes('No se pudo identificar la cuenta que ejecuta'));
+  const view = ctx.buildValidationView_(report);
+
+  assert.deepEqual(plain(view.counts), { valid: 3, invalid: 3, excluded: 0 });
+  assert.deepEqual(plain(view.rows.map((row) => row.rowNumber)), [2, 3]);
+  assert.equal(view.moreRows, 1);
+  assert.deepEqual(plain(view.invalidRows.map((row) => row.rowNumber)), [5, 6]);
+  assert.equal(view.moreInvalid, 1);
+
+  const review = ctx.buildRowReview_(report);
+  assert.equal(review.rows.length, 2);
+  assert.equal(review.more, 1);
+  const wide = ctx.buildRowReview_(report, 10);
+  assert.equal(wide.rows.length, 3);
+  assert.equal(wide.more, 0);
+  assert.deepEqual(plain(wide.commonAttachments), ['common-terms.pdf']);
+});
+
+test('AC-54 / D-47: overwriteRows lista las filas válidas con Fecha, Campaña o Detalle con valor, sin los valores', () => {
+  const { ctx, fixture, fake } = setup();
+  fake.setCell(3, 'Detalle', 'x');
+  fake.setCell(4, 'Fecha', '2026-01-01');
+  // Un valor de solo espacios no cuenta.
+  fake.setCell(2, 'Campaña', '   ');
+  // Una fila con Resultado no vacío no es válida: no aparece aunque tenga Detalle.
+  fake.appendRow(
+    buildRow({ 'Email Address': 'done@example.test', Resultado: 'Email Sent', Detalle: 'enviado antes' })
+  );
+  const report = ctx.buildPreflight_(fake.deps, fixture.config);
+  const view = ctx.buildValidationView_(report);
+
+  assert.deepEqual(plain(view.overwriteRows), [
+    { rowNumber: 3, columns: ['Detalle'] },
+    { rowNumber: 4, columns: ['Fecha'] },
+  ]);
+  assert.deepEqual(plain(ctx.findOverwriteRows_(report.valid, report.headers.columns)), plain(view.overwriteRows));
+  const text = JSON.stringify(view);
+  assert.ok(!text.includes('"x"'));
+  assert.ok(!text.includes('2026-01-01'));
+  assert.ok(!text.includes('enviado antes'));
+  assertNoSideEffects(fake);
+});
+
+test('AC-54 / D-47: findOverwriteRows_ ordena por fila y nombra las columnas como Fecha, Campaña, Detalle', () => {
+  const ctx = loadAppsScript();
+  const columns = { email: 0, attachments: -1, date: 1, campaign: 2, result: 3, detail: 4 };
+  const rows = [
+    { rowNumber: 7, values: ['g@example.test', '', 'Otra', '', ''] },
+    { rowNumber: 5, values: ['e@example.test', 'ayer', '', '', 'algo'] },
+    { rowNumber: 6, values: ['f@example.test', ' ', '', '', '\t'] },
+  ];
+  assert.deepEqual(plain(ctx.findOverwriteRows_(rows, columns)), [
+    { rowNumber: 5, columns: ['Fecha', 'Detalle'] },
+    { rowNumber: 7, columns: ['Campaña'] },
+  ]);
+  assert.deepEqual(plain(ctx.findOverwriteRows_([], columns)), []);
+
+  // Sin valores en esas columnas, la vista no lista nada.
+  const { ctx: viewCtx, fixture, fake } = setup();
+  const view = viewCtx.buildValidationView_(viewCtx.buildPreflight_(fake.deps, fixture.config));
+  assert.deepEqual(plain(view.overwriteRows), []);
+});
+
+test('AC-54 / D-47: formatOverwriteConsent_ arma el texto de la casilla con columnas por fila', () => {
+  const ctx = loadAppsScript();
+  assert.equal(
+    ctx.formatOverwriteConsent_([
+      { rowNumber: 3, columns: ['Detalle'] },
+      { rowNumber: 4, columns: ['Fecha'] },
+    ]),
+    'Acepto que se reemplacen los valores existentes de Fecha, Campaña o Detalle en 2 filas: ' +
+      'fila 3 (Detalle), fila 4 (Fecha)'
+  );
+  assert.equal(
+    ctx.formatOverwriteConsent_([{ rowNumber: 9, columns: ['Fecha', 'Campaña'] }]),
+    'Acepto que se reemplacen los valores existentes de Fecha, Campaña o Detalle en 1 fila: fila 9 (Fecha, Campaña)'
+  );
+
+  const many = Array.from({ length: 25 }, (_, i) => ({ rowNumber: i + 2, columns: ['Fecha', 'Detalle'] }));
+  const text = ctx.formatOverwriteConsent_(many);
+  assert.ok(
+    text.startsWith(
+      'Acepto que se reemplacen los valores existentes de Fecha, Campaña o Detalle en 25 filas: ' +
+        'fila 2 (Fecha, Detalle), fila 3 (Fecha, Detalle)'
+    )
+  );
+  assert.equal((text.match(/fila \d+ \(/g) || []).length, 20);
+  assert.ok(text.endsWith('fila 21 (Fecha, Detalle) y 5 filas más'));
+  assert.ok(!text.includes('\n'));
+
+  assert.equal(ctx.formatOverwriteConsent_([]), '');
 });

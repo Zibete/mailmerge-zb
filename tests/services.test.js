@@ -301,6 +301,48 @@ test('R-12: writeStatus usa la columna column + 1 y llama a flush después de es
   assert.deepEqual(google.log, [['getRange', 101, 3, 2], ['setValue', 101, 'ENVIANDO'], ['flush']]);
 });
 
+test('AC-41 / D-38: writeCells escribe cada celda en orden, neutraliza fórmulas y hace un solo flush al final', () => {
+  const { google, deps } = setup();
+  const date = new Date(Date.UTC(2026, 10, 9, 12, 0, 0));
+
+  deps.sheets.writeCells(101, 5, [
+    { column: 4, value: date },
+    { column: 5, value: '=HYPERLINK("x")' },
+    { column: 7, value: '+X' },
+    { column: 7, value: '-X' },
+    { column: 7, value: '@X' },
+    { column: 2, value: 42 },
+    { column: 6, value: 'ENVIANDO' },
+  ]);
+
+  assert.deepEqual(google.log, [
+    ['getRange', 101, 5, 5],
+    ['setValue', 101, date],
+    ['getRange', 101, 5, 6],
+    ['setValue', 101, '\'=HYPERLINK("x")'],
+    ['getRange', 101, 5, 8],
+    ['setValue', 101, "'+X"],
+    ['getRange', 101, 5, 8],
+    ['setValue', 101, "'-X"],
+    ['getRange', 101, 5, 8],
+    ['setValue', 101, "'@X"],
+    ['getRange', 101, 5, 3],
+    ['setValue', 101, 42],
+    ['getRange', 101, 5, 7],
+    ['setValue', 101, 'ENVIANDO'],
+    ['flush'],
+  ]);
+  // La `Date` pasa sin cambios (el mismo objeto).
+  assert.equal(google.log[1][2], date);
+});
+
+test('AC-41: writeCells lanza sin escribir si la pestaña no existe', () => {
+  const { google, deps } = setup();
+
+  assert.throws(() => deps.sheets.writeCells(999, 2, [{ column: 0, value: 'x' }]), /pestaña/);
+  assert.equal(google.log.filter((call) => call[0] === 'setValue' || call[0] === 'flush').length, 0);
+});
+
 test('D-33: writeHeaderCells inserta las columnas que faltan una sola vez, escribe en la fila 1 y hace un solo flush', () => {
   const { google, deps } = setup({ maxColumns: 6 });
 

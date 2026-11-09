@@ -2,9 +2,9 @@
 
 // Servicios falsos que imitan el contrato de `deps` del plan sobre el estado
 // mutable de un fixture (`tests/fixtures/campaign.js`). Registran las
-// llamadas con efectos (envíos, escrituras de estado, registro, lock) y
-// permiten inyectar fallas, fijar reloj y cuota, y mutar la hoja o la
-// plantilla durante una ejecución mediante ganchos.
+// llamadas con efectos (envíos, escrituras de celdas y de estado, registro,
+// lock) y permiten inyectar fallas, fijar reloj y cuota, y mutar la hoja o
+// la plantilla durante una ejecución mediante ganchos.
 //
 // Los falsos operan directamente sobre el fixture recibido: dos llamadas a
 // `createFakeDeps` con el mismo fixture comparten la hoja (útil para simular
@@ -33,9 +33,13 @@ function createFakeDeps(fixture, options = {}) {
     statusWrites: [],
     logEntries: [],
     lockCalls: [],
-    // Orden combinado de escrituras de estado y envíos, para verificar la
-    // secuencia ENVIANDO → send → Email Sent.
+    // Orden combinado de escrituras (de estado V1, de celdas y de
+    // encabezados) y envíos, para verificar la secuencia ENVIANDO → send →
+    // Email Sent.
     sequence: [],
+    // Llamadas a `writeCells` (`{ sheetId, rowNumber, cells }`, con copias de
+    // las celdas).
+    cellWrites: [],
     // Llamadas de lectura a Drive (para verificar que no haya llamadas extra).
     driveCalls: [],
     configWrites: [],
@@ -120,6 +124,39 @@ function createFakeDeps(fixture, options = {}) {
       calls.sequence.push({ type: 'writeStatus', rowNumber, value });
       if (fails) {
         throw new Error('Falso: falla después de escribir el estado');
+      }
+    },
+    // Escribe las celdas de una fila de datos en el orden dado (D-37),
+    // extendiendo la hoja si la fila no existe, como `writeStatus`.
+    // `failOn.writeCells = { value, rowNumber, afterWrite }` aplica cuando
+    // alguna celda de la llamada tiene ese `value` (`undefined` = cualquiera)
+    // y la fila coincide (`undefined` = cualquiera): sin `afterWrite` lanza
+    // antes de escribir; con `afterWrite` escribe todas las celdas y después
+    // lanza.
+    writeCells(sheetId, rowNumber, cells) {
+      const rule = failOn.writeCells;
+      const copies = cells.map((cell) => ({ column: cell.column, value: cell.value }));
+      const fails =
+        rule &&
+        (rule.value === undefined || copies.some((cell) => cell.value === rule.value)) &&
+        (rule.rowNumber === undefined || rule.rowNumber === rowNumber);
+      if (fails && !rule.afterWrite) {
+        calls.sequence.push({ type: 'writeCells-failed', rowNumber, cells: copies });
+        throw new Error('Falso: falla al escribir las celdas');
+      }
+      const sheet = requireSheet(sheetId);
+      while (sheet.values.length < rowNumber) {
+        sheet.values.push(sheet.values[0].map(() => ''));
+        sheet.hiddenByUser.push(false);
+        sheet.hiddenByFilter.push(false);
+      }
+      copies.forEach((cell) => {
+        sheet.values[rowNumber - 1][cell.column] = cell.value;
+      });
+      calls.cellWrites.push({ sheetId, rowNumber, cells: copies.map((cell) => ({ ...cell })) });
+      calls.sequence.push({ type: 'writeCells', rowNumber, cells: copies.map((cell) => ({ ...cell })) });
+      if (fails) {
+        throw new Error('Falso: falla después de escribir las celdas');
       }
     },
     // Escribe celdas de la fila 1 en el orden dado. Una columna más allá del
