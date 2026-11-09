@@ -149,7 +149,9 @@ function createCampaignFixture() {
     },
     account: { userEmail: USER_EMAIL },
     quota: 100,
-    config: { sheetId: CAMPAIGN_SHEET_ID, draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '' },
+    // `campaignName` vacío: `prepareConfirmation_` genera un ID por
+    // confirmación (D-39). `createLegacyFixture` lo hereda.
+    config: { sheetId: CAMPAIGN_SHEET_ID, draftId: DRAFT_ID, from: USER_EMAIL, replyTo: '', campaignName: '' },
   };
 }
 

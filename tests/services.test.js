@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
 const { loadAppsScript, plain } = require('./helpers/load-apps-script');
 
 const OWN_EMAIL = 'operator@example.test';
@@ -149,6 +150,7 @@ function createGoogleFakes(options = {}) {
 
   const properties = { ...(options.properties || {}) };
   const sentEmails = [];
+  const cacheStore = {};
 
   const globals = {
     SpreadsheetApp: {
@@ -195,11 +197,42 @@ function createGoogleFakes(options = {}) {
       }),
     },
     Session: { getEffectiveUser: () => ({ getEmail: () => OWN_EMAIL }) },
-    Utilities: { getUuid: () => '0123abcd-4567-89ef-0123-456789abcdef' },
+    // `computeDigest` devuelve los bytes con signo (-128..127), como el
+    // `Byte[]` de Apps Script.
+    Utilities: {
+      getUuid: () => '0123abcd-4567-89ef-0123-456789abcdef',
+      DigestAlgorithm: { SHA_256: 'SHA_256_ALG' },
+      Charset: { UTF_8: 'UTF_8_CHARSET' },
+      computeDigest(algorithm, text, charset) {
+        log.push(['computeDigest', algorithm, text, charset]);
+        return Array.from(nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest()).map((b) =>
+          b > 127 ? b - 256 : b
+        );
+      },
+    },
+    CacheService: {
+      getUserCache() {
+        log.push(['getUserCache']);
+        return {
+          get(key) {
+            log.push(['cache.get', key]);
+            return Object.prototype.hasOwnProperty.call(cacheStore, key) ? cacheStore[key] : null;
+          },
+          put(key, value, seconds) {
+            log.push(['cache.put', key, value, seconds]);
+            cacheStore[key] = value;
+          },
+          remove(key) {
+            log.push(['cache.remove', key]);
+            delete cacheStore[key];
+          },
+        };
+      },
+    },
     HtmlService: {},
   };
 
-  return { globals, log, sheets, sentEmails, attachmentsCalls, properties, nativeExport, binaryBlob };
+  return { globals, log, sheets, sentEmails, attachmentsCalls, properties, nativeExport, binaryBlob, cacheStore };
 }
 
 function setup(options) {
@@ -226,14 +259,26 @@ function baseMessage(patch = {}) {
   };
 }
 
-test('D-08: props.getConfig devuelve sheetId numérico', () => {
+test('D-08 / D-39: props.getConfig devuelve sheetId numérico y campaignName', () => {
   const { deps } = setup({
-    properties: { MM_SHEET_ID: '101', MM_DRAFT_ID: 'draft-001', MM_FROM: ALIAS_EMAIL, MM_REPLY_TO: 'r@example.test' },
+    properties: {
+      MM_SHEET_ID: '101',
+      MM_DRAFT_ID: 'draft-001',
+      MM_FROM: ALIAS_EMAIL,
+      MM_REPLY_TO: 'r@example.test',
+      MM_CAMPAIGN_NAME: 'Aviso noviembre',
+    },
   });
 
   const config = plain(deps.props.getConfig());
 
-  assert.deepEqual(config, { sheetId: 101, draftId: 'draft-001', from: ALIAS_EMAIL, replyTo: 'r@example.test' });
+  assert.deepEqual(config, {
+    sheetId: 101,
+    draftId: 'draft-001',
+    from: ALIAS_EMAIL,
+    replyTo: 'r@example.test',
+    campaignName: 'Aviso noviembre',
+  });
   assert.equal(typeof deps.props.getConfig().sheetId, 'number');
 });
 
@@ -244,17 +289,69 @@ test('D-08: props.getConfig devuelve sheetId null si falta o no es numérico, y 
   assert.equal(setup({ properties: {} }).deps.props.getConfig().replyTo, '');
 });
 
-test('D-08: props.setConfig guarda las cuatro claves como texto en UserProperties', () => {
+test('AC-46 / D-39: props.getConfig sin MM_CAMPAIGN_NAME (configuración V1) devuelve campaignName vacío', () => {
+  const { deps } = setup({
+    properties: { MM_SHEET_ID: '101', MM_DRAFT_ID: 'draft-001', MM_FROM: OWN_EMAIL, MM_REPLY_TO: '' },
+  });
+
+  assert.equal(deps.props.getConfig().campaignName, '');
+});
+
+test('D-08 / D-39: props.setConfig guarda las cinco claves como texto en UserProperties', () => {
   const { google, deps } = setup();
 
-  deps.props.setConfig({ sheetId: 101, draftId: 'draft-001', from: OWN_EMAIL, replyTo: '' });
+  deps.props.setConfig({ sheetId: 101, draftId: 'draft-001', from: OWN_EMAIL, replyTo: '', campaignName: 'Aviso' });
 
   assert.deepEqual(google.properties, {
     MM_SHEET_ID: '101',
     MM_DRAFT_ID: 'draft-001',
     MM_FROM: OWN_EMAIL,
     MM_REPLY_TO: '',
+    MM_CAMPAIGN_NAME: 'Aviso',
   });
+
+  deps.props.setConfig({ sheetId: 101, draftId: 'draft-001', from: OWN_EMAIL, replyTo: '' });
+  assert.equal(google.properties.MM_CAMPAIGN_NAME, '');
+});
+
+test('D-26: cache usa CacheService.getUserCache recién al usarse y delega get, put y remove', () => {
+  const { google, deps } = setup();
+  assert.equal(google.log.filter((entry) => entry[0] === 'getUserCache').length, 0);
+
+  assert.equal(deps.cache.get('MM_CONF_x'), null);
+  deps.cache.put('MM_CONF_x', '{"v":2}', 600);
+  assert.equal(deps.cache.get('MM_CONF_x'), '{"v":2}');
+  deps.cache.remove('MM_CONF_x');
+  assert.equal(deps.cache.get('MM_CONF_x'), null);
+
+  assert.deepEqual(
+    google.log.filter((entry) => entry[0].indexOf('cache.') === 0),
+    [
+      ['cache.get', 'MM_CONF_x'],
+      ['cache.put', 'MM_CONF_x', '{"v":2}', 600],
+      ['cache.get', 'MM_CONF_x'],
+      ['cache.remove', 'MM_CONF_x'],
+      ['cache.get', 'MM_CONF_x'],
+    ]
+  );
+  assert.ok(google.log.filter((entry) => entry[0] === 'getUserCache').length >= 1);
+});
+
+test('D-27: crypto.sha256Hex convierte los bytes con signo de computeDigest a hex en minúsculas', () => {
+  const { google, deps } = setup();
+
+  assert.equal(deps.crypto.sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.deepEqual(
+    google.log.filter((entry) => entry[0] === 'computeDigest'),
+    [['computeDigest', 'SHA_256_ALG', 'abc', 'UTF_8_CHARSET']]
+  );
+  assert.equal(deps.crypto.sha256Hex('Campaña ñ'), nodeCrypto.createHash('sha256').update('Campaña ñ', 'utf8').digest('hex'));
+});
+
+test('D-26: ids.newToken usa Utilities.getUuid', () => {
+  const { deps } = setup();
+
+  assert.equal(deps.ids.newToken(), '0123abcd-4567-89ef-0123-456789abcdef');
 });
 
 test('D-05: gmail.send omite replyTo vacío y from igual a la cuenta propia', () => {

@@ -276,8 +276,10 @@ function createServices_() {
     },
   };
 
-  // Configuración por usuario (D-08). `UserProperties` guarda texto: `sheetId`
-  // se convierte a número (o `null`) para compararlo con `getSheetId()`.
+  // Configuración por usuario (D-08, D-39). `UserProperties` guarda texto:
+  // `sheetId` se convierte a número (o `null`) para compararlo con
+  // `getSheetId()`. Una configuración V1 sin `MM_CAMPAIGN_NAME` devuelve
+  // `campaignName: ''`.
   const props = {
     getConfig: function () {
       const values = PropertiesService.getUserProperties().getProperties();
@@ -289,6 +291,7 @@ function createServices_() {
         draftId: values[PROPERTY_KEYS.DRAFT_ID] || '',
         from: values[PROPERTY_KEYS.FROM] || '',
         replyTo: values[PROPERTY_KEYS.REPLY_TO] || '',
+        campaignName: values[PROPERTY_KEYS.CAMPAIGN_NAME] || '',
       };
     },
     setConfig: function (config) {
@@ -297,7 +300,35 @@ function createServices_() {
       values[PROPERTY_KEYS.DRAFT_ID] = String(config.draftId);
       values[PROPERTY_KEYS.FROM] = String(config.from);
       values[PROPERTY_KEYS.REPLY_TO] = String(config.replyTo || '');
+      values[PROPERTY_KEYS.CAMPAIGN_NAME] = String(config.campaignName || '');
       PropertiesService.getUserProperties().setProperties(values);
+    },
+  };
+
+  // Caché aislada por usuario y script (D-26, D-29), resuelta en cada uso.
+  // Guarda el snapshot de confirmación y el registro de progreso como texto.
+  const cache = {
+    get: function (key) {
+      return CacheService.getUserCache().get(key);
+    },
+    put: function (key, value, ttlSeconds) {
+      CacheService.getUserCache().put(key, value, ttlSeconds);
+    },
+    remove: function (key) {
+      CacheService.getUserCache().remove(key);
+    },
+  };
+
+  // SHA-256 en hexadecimal en minúsculas (D-27). `computeDigest` devuelve
+  // bytes con signo (-128..127): `& 0xff` los lleva a 0..255.
+  const crypto = {
+    sha256Hex: function (text) {
+      const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text), Utilities.Charset.UTF_8);
+      let hex = '';
+      for (let i = 0; i < bytes.length; i++) {
+        hex += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
+      }
+      return hex;
     },
   };
 
@@ -326,6 +357,12 @@ function createServices_() {
       newCampaignId: function () {
         return Utilities.getUuid().slice(0, 8);
       },
+      // Token opaco de una confirmación (D-26).
+      newToken: function () {
+        return Utilities.getUuid();
+      },
     },
+    cache: cache,
+    crypto: crypto,
   };
 }

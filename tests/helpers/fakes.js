@@ -3,12 +3,15 @@
 // Servicios falsos que imitan el contrato de `deps` del plan sobre el estado
 // mutable de un fixture (`tests/fixtures/campaign.js`). Registran las
 // llamadas con efectos (envíos, escrituras de celdas y de estado, registro,
-// lock) y permiten inyectar fallas, fijar reloj y cuota, y mutar la hoja o
-// la plantilla durante una ejecución mediante ganchos.
+// caché, lock) y permiten inyectar fallas, fijar reloj y cuota, y mutar la
+// hoja o la plantilla durante una ejecución mediante ganchos.
 //
 // Los falsos operan directamente sobre el fixture recibido: dos llamadas a
-// `createFakeDeps` con el mismo fixture comparten la hoja (útil para simular
-// una segunda ejecución), pero cada una tiene su propio `calls`.
+// `createFakeDeps` con el mismo fixture comparten la hoja y la caché
+// (`fixture.cache`; útil para simular una segunda ejecución u otra cuenta),
+// pero cada una tiene su propio `calls`.
+
+const nodeCrypto = require('node:crypto');
 
 const LOG_SHEET_NAME = 'Registro Mail Merge';
 const LOG_HEADERS = ['Fecha', 'Campaña', 'Pestaña', 'Fila', 'Destinatario', 'Resultado', 'Detalle'];
@@ -26,7 +29,15 @@ function createFakeDeps(fixture, options = {}) {
     now: options.now === undefined ? DEFAULT_NOW : options.now,
     quota: options.quota === undefined ? fixture.quota : options.quota,
     campaignCounter: 0,
+    tokenCounter: 0,
   };
+
+  // Caché en memoria compartida por todos los falsos del mismo fixture, como
+  // `CacheService.getUserCache()`: `{ [clave]: texto }`.
+  if (!fixture.cache) {
+    fixture.cache = {};
+  }
+  const cacheStore = fixture.cache;
 
   const calls = {
     sent: [],
@@ -45,6 +56,12 @@ function createFakeDeps(fixture, options = {}) {
     configWrites: [],
     // Celdas de encabezado escritas por `writeHeaderCells` (migración).
     headerWrites: [],
+    // Accesos a la caché: claves leídas, escrituras (`{ key, value,
+    // ttlSeconds }`) y claves borradas. Las escrituras y los borrados también
+    // quedan en `sequence` (`cachePut` / `cacheRemove`).
+    cacheGets: [],
+    cachePuts: [],
+    cacheRemoves: [],
   };
 
   function findSheet(sheetId) {
@@ -279,6 +296,33 @@ function createFakeDeps(fixture, options = {}) {
     },
   };
 
+  // `failOn.cachePut` y `failOn.cacheRemove`: `true` o una función de la
+  // clave; lanzan sin modificar la caché.
+  const cache = {
+    get(key) {
+      calls.cacheGets.push(key);
+      return Object.prototype.hasOwnProperty.call(cacheStore, key) ? cacheStore[key] : null;
+    },
+    put(key, value, ttlSeconds) {
+      if (matchesFailure(failOn.cachePut, key)) {
+        calls.sequence.push({ type: 'cachePut-failed', key });
+        throw new Error('Falso: falla al escribir en la caché');
+      }
+      cacheStore[key] = String(value);
+      calls.cachePuts.push({ key, value: String(value), ttlSeconds });
+      calls.sequence.push({ type: 'cachePut', key });
+    },
+    remove(key) {
+      if (matchesFailure(failOn.cacheRemove, key)) {
+        calls.sequence.push({ type: 'cacheRemove-failed', key });
+        throw new Error('Falso: falla al borrar de la caché');
+      }
+      delete cacheStore[key];
+      calls.cacheRemoves.push(key);
+      calls.sequence.push({ type: 'cacheRemove', key });
+    },
+  };
+
   const deps = {
     sheets,
     gmail,
@@ -295,8 +339,10 @@ function createFakeDeps(fixture, options = {}) {
       },
     },
     props: {
+      // Una configuración V1 sin `campaignName` devuelve `''`, como el
+      // adaptador real sin `MM_CAMPAIGN_NAME`.
       getConfig() {
-        return fixture.config ? { ...fixture.config } : null;
+        return fixture.config ? { campaignName: '', ...fixture.config } : null;
       },
       setConfig(config) {
         calls.configWrites.push({ ...config });
@@ -315,6 +361,21 @@ function createFakeDeps(fixture, options = {}) {
         }
         state.campaignCounter++;
         return 'camp' + String(state.campaignCounter).padStart(4, '0');
+      },
+      // UUID válidos y deterministas: `options.tokens` en orden o
+      // `00000000-0000-4000-8000-00000000000N`.
+      newToken() {
+        state.tokenCounter++;
+        if (Array.isArray(options.tokens) && options.tokens.length >= state.tokenCounter) {
+          return options.tokens[state.tokenCounter - 1];
+        }
+        return '00000000-0000-4000-8000-' + String(state.tokenCounter).padStart(12, '0');
+      },
+    },
+    cache,
+    crypto: {
+      sha256Hex(text) {
+        return nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
       },
     },
   };
@@ -385,6 +446,14 @@ function createFakeDeps(fixture, options = {}) {
     setTemplate,
     setNow(value) {
       state.now = value;
+    },
+    // Desalojo de una entrada de la caché (sin registrar llamadas).
+    evict(key) {
+      delete cacheStore[key];
+    },
+    // Contenido corrupto o alterado en la caché (sin registrar llamadas).
+    setCacheValue(key, value) {
+      cacheStore[key] = value;
     },
     setQuota(value) {
       state.quota = value;
