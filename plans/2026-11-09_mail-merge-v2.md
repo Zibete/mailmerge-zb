@@ -1,0 +1,680 @@
+# Plan — Mail Merge V2 local (Apps Script V8)
+
+**Estado:** plan canónico de `spec-driven-dev` para evolucionar la V1 implementada (`plans/2026-11-08_mail-merge-v1.md`, `LOCAL_VERIFIED`). Decisiones aprobadas por el usuario el 2026-11-09: D-31, D-34 (a) a (d), D-39 y D-46 (progreso en caché sin destinatarios). D-34 (e) y D-47 son la resolución conservadora propuesta para hojas sin encabezados heredados que ya tienen `Resultado` y columnas `Fecha`, `Campaña` o `Detalle` propias, y se confirman antes del paso 2. Se conservan los IDs `R-xx`, `AC-xx` y `D-xx` de la V1; las decisiones nuevas siguen desde `D-25` y los criterios nuevos desde `AC-32`. Meta: `LOCAL_VERIFIED`; todo lo que dependa de Google queda `PENDING LIVE VALIDATION`.
+
+## Contexto
+
+La V1 reparte el flujo entre un menú de cinco ítems, `Ui.alert` / `Ui.prompt` (validación, prueba, confirmación, resumen) y una sidebar que solo configura. El resultado de cada fila queda en `Mail Merge Status` y el detalle en una pestaña aparte `Registro Mail Merge`. El operador no ve progreso mientras se envía y la prueba no deja rastro en la fila.
+
+La V2 pide cinco cambios:
+
+1. Centralizar configuración, validación, envío de prueba, confirmación, progreso y resultados en `Sidebar.html`, sin `Ui.alert` ni `Ui.prompt`.
+2. Mostrar progreso real del envío, con contadores y resultado por fila.
+3. Reemplazar `Registro Mail Merge` por cuatro columnas en la pestaña de la campaña: `Fecha`, `Campaña`, `Resultado`, `Detalle`. `Mail Merge Status` pasa a `Resultado` y `Scheduled Date` a `Fecha` sin perder datos; las columnas que falten se crean de forma segura.
+4. Nombre de campaña opcional; si está vacío se genera un ID aleatorio.
+5. Una prueba exitosa va a la cuenta propia, conserva `[PRUEBA]` y deja `Resultado = Email Sent`. Para enviar después al destinatario real hay que borrar ese resultado a mano. Solo las filas con `Resultado` vacío son elegibles.
+
+El cambio de fondo es que la sidebar llama al servidor con `google.script.run`, que es **asíncrono y sin estado**: cada llamada es una ejecución separada. En la V1 lo confirmado vivía en la memoria de una sola ejecución (el diálogo suspendía el script). En la V2 lo confirmado tiene que sobrevivir entre la llamada que prepara la confirmación y la que envía, sin que el cliente pueda alterarlo, y el progreso tiene que leerse mientras otra ejecución envía.
+
+## Invariantes que se preservan (no negociables)
+
+Cada uno tiene al menos un test de regresión en "Escenarios de prueba".
+
+- **Adjuntos estrictos:** un enlace inválido, un archivo inexistente, sin acceso, en la papelera, de tipo no soportado o demasiado grande bloquea la fila; nunca se omite un adjunto (AC-05 a AC-09). `Attachments.js` y `buildMessage_` no cambian.
+- **Filas ocultas excluidas:** ocultas a mano o por filtro, también para la prueba (AC-11, AC-48).
+- **Confirmación humana explícita:** nada se envía sin un clic de confirmación sobre una vista que muestra destinatario y adjuntos de cada fila (AC-34, AC-52).
+- **Lock:** el envío real y la prueba toman `LockService.getDocumentLock()` durante toda la ejecución; preparar columnas también (AC-18, AC-53).
+- **Revalidación entre fases:** bajo el lock se relee todo, se compara contra lo confirmado y solo se envían filas idénticas; un cambio global cancela todo (D-15, AC-23 a AC-25, AC-37).
+- **Checkpoint `ENVIANDO`:** se persiste `Resultado = ENVIANDO` (con `flush`) antes de llamar a Gmail y `Email Sent` solo después de que Gmail aceptó y la fila sigue en su lugar (AC-19, AC-20, AC-40).
+- **`REVISAR`:** una excepción de Gmail o una fila desplazada detiene la ejecución y deja la fila para conciliación manual (AC-21, D-16).
+- **Exclusión de todo resultado no vacío:** `SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR`, fechas o texto arbitrario en `Resultado` excluyen la fila del envío y de la prueba (AC-10, AC-48).
+- **Sin reintentos automáticos:** ni el servidor ni el cliente vuelven a llamar al envío por su cuenta (AC-36, AC-52).
+- **Sin envío ante confirmación caducada o manipulada:** token inexistente, vencido, ya usado, de otro tipo, de otro usuario o con contenido alterado → cero envíos y cero escrituras (AC-35, AC-36).
+- Escapado HTML, saneo de cabeceras, neutralización de fórmulas en lo que el script escribe en la hoja, datos mínimos, sin cambios de permisos de Drive, sin triggers, sin `UrlFetchApp`, mismos scopes OAuth (AC-02, AC-28, AC-41).
+
+## Enfoque
+
+1. **Una sola interfaz: la sidebar.** El menú queda con un único ítem, `Abrir Mail Merge`, que abre la sidebar. La sidebar tiene secciones para configuración, validación (con "Preparar columnas" cuando corresponde), prueba, envío con confirmación, progreso y resultados. Ningún archivo usa `Ui.alert`, `Ui.prompt`, `window.alert`, `window.confirm` ni `window.prompt`.
+2. **Confirmación con token opaco y snapshot en el servidor.** `prepare…` valida, arma la vista que ve el operador y guarda un snapshot compacto (digests SHA-256 de la plantilla y de cada fila confirmada, configuración, campaña, vencimiento) en `CacheService.getUserCache()`, bajo un token aleatorio. El cliente solo recibe el token y la vista. `execute…(token)` toma el lock, lee el snapshot, lo verifica, lo **consume** (lo borra) antes de la primera escritura y recién entonces revalida y envía. Comparación de alternativas en "Alternativas evaluadas".
+3. **Progreso real por publicación y sondeo.** La ejecución de envío es una sola, como en la V1, con el lock tomado de principio a fin. Después de cada fila publica un registro de progreso (contadores y resultados por fila) en la misma caché, bajo una clave derivada del token. Mientras espera la respuesta de `execute…`, la sidebar llama a `getSendProgress(token)` cada 2 segundos. El progreso es informativo: el resultado autoritativo es el que devuelve `execute…`, y una falla al publicar nunca afecta el envío.
+4. **Columnas gestionadas en la pestaña.** `Fecha`, `Campaña`, `Resultado` y `Detalle` viven en la pestaña de la campaña. `Resultado` es la fuente de verdad del control de duplicados y se escribe **siempre último** en cada transición. Las otras tres son informativas y quedan fuera de la clave de fila. La pestaña `Registro Mail Merge` existente no se escribe ni se borra.
+5. **Migración explícita y reanudable.** "Preparar columnas" renombra en el lugar las celdas de encabezado `Mail Merge Status` → `Resultado` y `Scheduled Date` → `Fecha` (los datos no se mueven) y agrega las columnas faltantes a la derecha de la última columna usada. Corre bajo el lock, con compare-and-set sobre la fila de encabezados, y es idempotente. Validar nunca migra.
+6. **La prueba usa el mismo motor que el envío real.** Es una confirmación de tipo `test` con una sola fila: mismo token, lock, revalidación, checkpoint y escritura de resultado. Solo cambian `to` (la cuenta propia), el prefijo `[PRUEBA] ` del asunto y el texto de `Detalle`.
+7. **Lógica pura con adaptadores finos, como en la V1.** Los controladores públicos que llama la sidebar son envoltorios de una línea sobre funciones `…_(deps, …)` que se prueban con falsos. La sidebar recibe vistas JSON ya armadas y saneadas por el servidor y solo las pinta con `textContent`.
+
+## Alternativas evaluadas
+
+### Trasladar lo confirmado entre llamadas de `google.script.run`
+
+Requisitos: lo que se envía tiene que ser exactamente lo que el operador vio; el cliente no puede ampliarlo ni alterarlo; la confirmación vence; se usa una sola vez; ante cualquier duda, falla cerrado.
+
+| Alternativa | Almacenamiento | Vencimiento | Concurrencia | Límites de Apps Script (a verificar en due diligence) | Falla segura | Veredicto |
+|---|---|---|---|---|---|---|
+| **A. Snapshot firmado (HMAC) en el cliente** | El cliente guarda el snapshot y una firma `Utilities.computeHmacSha256Signature` con un secreto en `UserProperties` | Campo `expiresAt` dentro del contenido firmado | Sin uso único: el mismo snapshot se puede reenviar hasta que vence (la revalidación lo vuelve inocuo, pero la confirmación se puede reutilizar) | Tamaño de los argumentos de `google.script.run` (no documentado con precisión) | Firma inválida → rechazo | Descartada: agrega manejo de secretos y criptografía y no garantiza uso único |
+| **B. Token opaco + snapshot en `CacheService.getUserCache()`** | Caché por usuario; el cliente solo tiene un UUID | `expiresAt` dentro del snapshot (comparado con `clock.now()`, determinista en tests) y TTL de la caché como segunda barrera | Caché aislada por usuario y script; uso único borrando la entrada bajo el lock antes de la primera escritura; un doble clic encuentra el lock tomado o la entrada ya consumida | 100 KB por valor, clave de hasta 250 caracteres, vencimiento máximo de 6 h; la caché es *best effort* y puede desalojar antes | Desalojo, vencimiento, token desconocido o JSON inválido → "La confirmación venció o no es válida", cero envíos | **Elegida**: mínima, sin secretos, uso único, aislada por usuario |
+| **C. Token + snapshot en `UserProperties`** | Propiedades del usuario (persistentes) | Solo `expiresAt`; hay que limpiar entradas viejas a mano | Igual que B, pero lo que no se consume queda guardado para siempre | 9 KB por valor y 500 KB por almacén (≈110 filas con digests); cuota diaria de lecturas/escrituras de propiedades | Igual que B | Descartada: límite de tamaño bajo y basura persistente |
+| **D. `DocumentProperties` / `ScriptProperties`** | Compartidas entre usuarios | Igual que C | Un usuario podría leer o pisar la confirmación de otro | Igual que C | — | Descartada: rompe el aislamiento por usuario |
+| **E. Sin snapshot: enviar lo que sea válido al momento de ejecutar** | Nada | — | — | — | No hay forma de saber qué vio el operador | Descartada: viola la confirmación explícita |
+
+### Publicar progreso real
+
+| Alternativa | Almacenamiento | Vencimiento | Concurrencia | Límites | Falla segura | Veredicto |
+|---|---|---|---|---|---|---|
+| **P1. Lotes conducidos por el cliente** (`executeBatch(token)` repetido, N filas por llamada) | Cursor y resultados parciales en caché | TTL deslizante por lote | El lock se libera entre lotes: otra ejecución puede intercalarse (la revalidación por fila lo cubre); hay que proteger el cursor contra dos lotes simultáneos | Cada lote es una ejecución propia, así que el total puede superar 6 min | Si se cierra la sidebar, las filas restantes quedan pendientes (seguro) | Descartada para V2: cambia la semántica del lock y agrega estado de cursor; queda como evolución si hiciera falta superar 6 min |
+| **P2. Ejecución única + publicación por fila en caché + sondeo** | Registro de progreso en `CacheService.getUserCache()` bajo `MM_PROG_<token>` | `LIMITS.PROGRESS_TTL_MS` (30 min) | El lock se mantiene toda la ejecución (igual que en la V1); `getSendProgress` solo lee la caché, sin lock | 100 KB por valor (resultados por fila acotados a `MAX_CONFIRM_ROWS`, sin destinatarios (D-46); con detalles largos 500 filas pueden superar 100 KB, así que la publicación recorta filas para no exceder `MAX_CACHE_VALUE_BYTES`, ver `publishProgress_`); 30 ejecuciones simultáneas por usuario; cada sondeo es una ejecución corta | Una falla al publicar se ignora (`try/catch`); si el sondeo no corre en paralelo, la sidebar muestra el resultado final igual | **Elegida**: reutiliza el motor V1 casi intacto y conserva el lock |
+| **P3. Sin progreso, solo el resultado final** | — | — | — | — | — | Descartada: no cumple el punto 2 |
+| **P4. Progreso en `UserProperties`** | Propiedades persistentes | Limpieza manual | — | 9 KB por valor; una escritura por fila contra la cuota diaria | — | Descartada |
+| **P5. Sondear la hoja (columna `Resultado`)** | La hoja | — | Leer la hoja en cada sondeo es costoso (las filas ocultas cuestan dos llamadas por fila) y no distingue las filas de esta ejecución | — | — | Descartada; la hoja sigue siendo la fuente de verdad final |
+
+## Decisiones de implementación
+
+Las decisiones V1 siguen vigentes salvo las que se indican como reemplazadas o modificadas. Las marcadas **`APROBADA (2026-11-09)`** las aprobó el usuario en forma explícita; las marcadas **`PROPUESTA`** se incorporan al plan y se confirman antes del paso de implementación que las usa.
+
+| ID | Decisión | Motivo |
+|---|---|---|
+| D-25 | Menú `Mail Merge` con un solo ítem `Abrir Mail Merge` (`menuOpenPanel`). Se eliminan `menuConfigure`, `menuValidate`, `menuTestSend`, `menuSendPending`, `menuShowLog` y los controladores `runValidate_`, `runTestSendFromUi_`, `runSendPending_`. `createUi_` desaparece: `menuOpenPanel` llama directo a `SpreadsheetApp.getUi().showSidebar(...)` | Punto 1: todo en la sidebar, sin `Ui.alert` ni `Ui.prompt` |
+| D-26 | La confirmación se traslada con un token `Utilities.getUuid()` y un snapshot en `CacheService.getUserCache()` (alternativa B). Vencimiento `LIMITS.CONFIRM_TTL_MS = 600000` (10 min) desde `prepare…`, verificado con `clock.now()` contra `expiresAt` y además con el TTL de la caché (`ceil(ms/1000)` segundos) | Ver "Alternativas evaluadas". 10 min alcanzan para revisar hasta 500 filas y acotan la ventana entre lo visto y lo enviado |
+| D-27 | El snapshot guarda digests SHA-256 en hexadecimal (`deps.crypto.sha256Hex`, adaptador sobre `Utilities.computeDigest(SHA_256, texto, UTF_8)`) de `templateKey` y de la clave de cada fila, **nunca los valores de las filas** (destinatarios, variables, enlaces de Drive) ni el contenido de la plantilla. Sí guarda datos de cuenta y de configuración: la dirección de la cuenta que ejecuta (`userEmail` y, en la prueba, `testTo`), `from` y `replyTo` (direcciones), `sheetId`, `draftId`, el nombre de campaña o su ID y los números de fila confirmados. El progreso (D-46) guarda números de fila, resultados, detalles redactados y contadores. Todo vive en la caché aislada del usuario, con vencimiento de 10 o 30 min | Mantiene el snapshot muy por debajo de 100 KB (≈75 bytes por fila) y minimiza lo que queda en la caché: ningún dato de los destinatarios ni del contenido del correo; los datos de cuenta y configuración son los mínimos para verificar la confirmación (D-43) y ya están en las `UserProperties` del mismo usuario |
+| D-28 | El snapshot es de **un solo uso**: `execute…` lo borra de la caché bajo el lock, después de verificarlo y antes de cualquier escritura o envío. Si el borrado lanza, no se envía nada. Un snapshot rechazado (vencido, de otro tipo o de otro usuario) también se borra | Un doble clic o una segunda pestaña no pueden reutilizar una confirmación |
+| D-29 | Progreso por publicación en caché y sondeo (alternativa P2): `MM_PROG_<token>` con TTL `LIMITS.PROGRESS_TTL_MS = 1800000`; publicación al empezar, después de cada fila y al terminar; la sidebar sondea cada `PROGRESS_POLL_MS = 2000` (constante de la sidebar), una llamada por vez, hasta que `execute…` responde | Ver "Alternativas evaluadas" |
+| D-30 | El presupuesto `MAX_RUNTIME_MS` (270 s) se mide desde el inicio de la llamada `execute…`. **Reemplaza D-12** | La confirmación ya no ocurre dentro de la ejecución que envía |
+| D-31 | **`APROBADA (2026-11-09)`** — Columnas gestionadas en la pestaña de la campaña, con estos literales exactos: `Fecha`, `Campaña`, `Resultado`, `Detalle`. `Resultado` admite los mismos valores que `Mail Merge Status` (`SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR` u otro texto). `Mail Merge Status` y `Scheduled Date` pasan a ser encabezados **heredados** que solo reconoce la migración. **Reemplaza D-01** en lo que respecta a encabezados (los estados y `[PRUEBA] ` no cambian) y **reemplaza D-03, D-17 y D-18** | Punto 3. Cambia literales de compatibilidad: requiere actualizar `AGENTS.md` y `docs/DECISIONS.md` (este plan es la modificación de contrato que pide `AGENTS.md`; el usuario la aprobó en forma explícita el 2026-11-09) |
+| D-32 | La pestaña `Registro Mail Merge` existente no se escribe, no se borra y sigue sin ofrecerse como pestaña de campaña (`LEGACY_LOG_SHEET_NAME`). No se migran sus datos a las filas | Sin pérdida de datos; el registro histórico queda como estaba |
+| D-33 | **Migración explícita** ("Preparar columnas"): (1) renombra la celda de encabezado `Mail Merge Status` → `Resultado` y `Scheduled Date` → `Fecha` en el lugar, sin tocar los datos; (2) agrega las columnas gestionadas que falten, en el orden `Resultado`, `Fecha`, `Campaña`, `Detalle` (posición y orden de escritura), a partir de la primera columna a la derecha de la última columna con contenido en **cualquier** fila (`values[0].length` de `getDataRange`), insertando columnas al final si la hoja no tiene suficientes. Corre bajo el lock, recalcula el plan con una relectura y solo aplica si la fila de encabezados es idéntica a la que vio el operador (compare-and-set). Orden de escritura fijo: primero `Mail Merge Status` → `Resultado`, después `Scheduled Date` → `Fecha` y por último los agregados, con `Resultado` primero si falta. Así **toda migración interrumpida después de su primera escritura ya tiene `Resultado`**, tanto si venía de una hoja V1 como de una hoja sin columna de estado. Es idempotente: si falla a mitad, volver a ejecutarla completa lo que falta; con ese orden todo estado intermedio (por ejemplo `Resultado` + `Scheduled Date`, o `Resultado` solo) se vuelve a planificar sin caer en los bloqueos de D-34, mientras que con otro orden `Mail Merge Status` + `Fecha` quedaría bloqueado por D-34 (b) y `Fecha` sin `Resultado` por D-34 (d) | Punto 3: "crear columnas faltantes de forma segura". Agregar a la derecha del área usada garantiza celdas vacías en todas las filas y no desplaza columnas existentes |
+| D-34 | **(a) a (d) `APROBADA (2026-11-09)`; (e) `PROPUESTA`** — La migración se **bloquea** (cero escrituras) si: (a) conviven un encabezado heredado y su reemplazo (`Mail Merge Status` y `Resultado`, o `Scheduled Date` y `Fecha`); (b) la hoja todavía tiene `Mail Merge Status` y ya existe una columna `Fecha`, `Campaña` o `Detalle` que no proviene del renombre (probablemente datos del operador); (c) alguna fila, oculta o no, tiene `Scheduled Date` con valor y la columna de estado vacía (`Mail Merge Status`, o `Resultado` si ese renombre ya se aplicó en una ejecución anterior interrumpida); (d) la hoja no tiene encabezados heredados ni `Resultado`, pero ya tiene alguna de `Fecha`, `Campaña` o `Detalle`: es una columna propia del operador, porque por el orden de D-33 ninguna migración interrumpida deja esas columnas sin `Resultado`; (e) la hoja no tiene encabezados heredados, ya tiene `Resultado`, le falta alguna columna gestionada y alguna de las presentes entre `Fecha`, `Campaña` y `Detalle` tiene valor en una fila (oculta o no) con `Resultado` vacío. En (c) y (e) el error lista las filas (y en (e) la columna), hasta 20 y `y N filas más`, y pide resolverlas a mano: en (c), vaciar `Scheduled Date` si se quiere enviar o escribir `SKIP`; en (d) y (e), renombrar la columna propia (por ejemplo `Fecha de turno`, actualizando el borrador si la usa) o, en (e), vaciar esas celdas si no tienen datos que conservar | (c): en V1 una fecha programada excluía la fila (D-03); en V2 solo `Resultado` decide la elegibilidad (punto 5), así que renombrar sin más volvería enviables filas que hoy no lo son. Alternativas descartadas para (c): escribir `SKIP` automáticamente (modifica datos del operador sin que lo decida) o mantener "`Fecha` con valor excluye" (contradice el punto 5: después de una prueba habría que borrar también `Fecha`). (d) y (e): el claim escribe `Fecha`, `Campaña` y `Detalle` solo en filas con `Resultado` vacío, así que los datos propios que corren riesgo son exactamente los de esas filas. (e) no compromete la reanudación: las columnas que agrega la migración nacen vacías (no se envía nada con la hoja incompleta, D-35) y, por (c), una `Fecha` renombrada desde `Scheduled Date` solo tiene valores en filas con estado. Si la hoja ya está completa, ver D-47 |
+| D-35 | La validación exige las cuatro columnas gestionadas y `Email Address`. Si la hoja tiene encabezados heredados o le falta alguna columna gestionada, la validación devuelve un error global y un **plan de columnas** (qué se renombra y qué se agrega) para que la sidebar ofrezca "Preparar columnas". Un marcador de la plantilla que referencia una columna gestionada (`{{Fecha}}`, `{{Resultado}}`, etc.) es error global | Validar sigue siendo de solo lectura (AC-27). Las columnas gestionadas cambian durante el envío: no pueden alimentar el contenido del correo |
+| D-36 | La clave de fila (`rowKey_`) es el JSON de los valores mostrados **con `Fecha`, `Campaña` y `Detalle` reemplazados por `''`**; `Resultado` sí forma parte. **Modifica D-14** | El script escribe esas tres columnas durante el envío y su texto mostrado depende del formato de la hoja (una `Date`), así que el paso 8 de la Fase B no podría predecirlo. `Resultado` tiene que estar vacío al confirmar y `ENVIANDO` después del claim, como en la V1 |
+| D-37 | Escrituras por transición, con un único adaptador `sheets.writeCells(sheetId, rowNumber, cells)` que hace `setValue` en el orden dado y un solo `SpreadsheetApp.flush()` al final. **Claim:** `Fecha = new Date(clock.now())`, `Campaña = <campaña>`, `Detalle = 'Envío iniciado; si Resultado sigue en ENVIANDO, revisá la carpeta Enviados'`, `Resultado = ENVIANDO`. **Éxito:** `Detalle` (texto de éxito) y luego `Resultado = Email Sent`. **Excepción de Gmail:** `Detalle` (motivo resumido) y luego `Resultado = REVISAR`. **Fila omitida, claim fallido o fila desplazada:** ninguna escritura en la hoja; el motivo solo aparece en la sidebar. Reemplaza `writeStatus` | `Resultado` último: si la ejecución se corta a mitad de una transición, el estado que importa queda en el valor anterior seguro (vacío antes del claim, `ENVIANDO` después). No se escribe sobre filas que cambiaron o se movieron |
+| D-38 | Lo que el script escribe en la hoja se neutraliza como en el registro V1: un texto que empieza con `=`, `+`, `-` o `@` se escribe precedido por `'` (en el adaptador `writeCells`, igual que `asLogCell_`). `Detalle` va en una línea, sin URLs (`summarizeError_`) y con hasta `LIMITS.MAX_DETAIL_CHARS = 300` caracteres. Nunca se escribe cuerpo, asunto renderizado, URLs ni valores de otras columnas | Mismo contrato de minimización que AC-26, ahora sobre celdas |
+| D-39 | Nombre de campaña opcional, guardado por usuario en `UserProperties` (`MM_CAMPAIGN_NAME`). `saveConfig` lo sanea (`sanitizeHeaderValue_`, recorte) y rechaza más de `LIMITS.MAX_CAMPAIGN_NAME_CHARS = 80` caracteres. **`APROBADA (2026-11-09)`**: si está vacío, `prepare…` genera un ID con `ids.newCampaignId()` (8 caracteres de un UUID) **por confirmación**; se muestra en la vista, se guarda en el snapshot y se escribe en `Campaña` de todas las filas de esa ejecución (y de la prueba). Dos ejecuciones sin nombre tienen IDs distintos | Punto 4. Por confirmación conserva la semántica V1 (`campaignId` por ejecución). La alternativa (generar el ID al guardar la configuración y reutilizarlo) agruparía varias tandas, pero el operador ya puede lograrlo escribiendo un nombre |
+| D-40 | **La prueba escribe resultado (reemplaza D-07):** solo se puede probar una fila **elegible y válida** (visible, `Resultado` vacío, sin errores). Usa una confirmación de tipo `test` con esa única fila; el envío pasa por el mismo motor: lock, revalidación, claim `ENVIANDO`, Gmail, verificación y `Resultado = Email Sent`. `to` = `session.userEmail()` y asunto con `TEST_SUBJECT_PREFIX`. `Detalle` de éxito: `PRUEBA enviada a tu cuenta (<cuenta>); el destinatario real no recibió este correo. Para enviárselo, borrá Resultado`. Una excepción de Gmail deja `REVISAR`, como en el envío real. D-06 (casilla de prueba = cuenta propia) sigue vigente | Punto 5. Exigir elegibilidad evita pisar un resultado existente (invariante: el script nunca cambia un `Resultado` no vacío) y respeta filas ocultas |
+| D-41 | Tope de filas por confirmación `LIMITS.MAX_CONFIRM_ROWS = 500`. Si hay más filas válidas, `prepareSendPending` falla cerrado sin guardar snapshot y pide enviar por tandas (con un filtro, que excluye las filas ocultas). Además, si el JSON del snapshot supera `LIMITS.MAX_CACHE_VALUE_BYTES = 90 * 1024`, falla cerrado igual | Cota del valor de caché (100 KB) con margen. Con `MAX_RUNTIME_MS` de 4,5 min, una ejecución envía bastante menos de 500 correos; las filas no procesadas siguen pendientes, como en la V1 |
+| D-42 | La vista de confirmación y la de validación listan **todas** las filas a enviar (hasta `MAX_CONFIRM_ROWS`) con `Fila N → destinatario: archivo1, archivo2`, más los adjuntos comunes; las filas inválidas se listan hasta `MAX_CONFIRM_ROWS` y luego `y N filas más`. **Modifica D-23** (que cortaba en 20 por el tamaño del diálogo) | La sidebar permite desplazarse; confirmar sin poder ver todas las filas debilitaba la revisión |
+| D-43 | La configuración vigente al ejecutar (`props.getConfig()`) tiene que ser idéntica a la del snapshot (`sheetId`, `draftId`, `from`, `replyTo`, `campaignName`); si no, se cancela todo sin enviar. Además se mantiene D-15 (plantilla, encabezados, remitente o Reply-To distintos → cancelación total) comparando `sha256Hex(templateKey)` | Otra pestaña del navegador puede haber cambiado la configuración entre preparar y confirmar |
+| D-44 | Contrato con el cliente: las funciones públicas reciben solo datos mínimos (token, número de fila, formulario de configuración, clave de encabezados) y devuelven JSON plano (sin `Date`, `Map` ni funciones). Todo texto se sanea en el servidor (`sanitizeHeaderValue_`); la sidebar inserta datos solo con `textContent` / `new Option`. El cliente nunca envía filas, claves ni digests | `google.script.run` solo transporta tipos JSON; el cliente no es confiable |
+| D-45 | Sin reintentos: la sidebar llama a `execute…` una sola vez por token (botón deshabilitado desde el clic). Si `execute…` falla del lado del transporte (`withFailureHandler`), muestra el último progreso conocido y la guía "No se pudo confirmar el resultado. Revisá la columna Resultado (ENVIANDO / REVISAR) antes de volver a enviar"; para volver a enviar hay que preparar una confirmación nueva. Si el lock no está disponible, el snapshot no se consume pero la sidebar igual vuelve al inicio | Un reintento automático podría duplicar envíos |
+| D-46 | **`APROBADA (2026-11-09)`** — El registro de progreso en caché **no guarda destinatarios**: sus filas son `{ rowNumber, result, detail }`, sin `recipient`, y `publishProgress_` reemplaza en `detail` todo texto con forma de dirección de correo (`/[^\s@<>()",;:]+@[^\s@<>()",;:]+/g`) por `[dirección]` (cubre excepciones de Gmail que citen una dirección y el `Detalle` de la prueba, que nombra la cuenta). La sidebar muestra el destinatario uniendo por `rowNumber` con las filas de la `ConfirmationView` que ya tiene (en la prueba, `view.to`). `SendResultView`, que se devuelve directo a la sidebar y no se guarda en la caché, sí trae `recipient` y el `detail` sin redactar | Minimización: el progreso dura 30 min en la caché y no necesita direcciones; el cliente ya las tiene de la confirmación |
+| D-47 | **`PROPUESTA`** — En una hoja completa (las cuatro columnas gestionadas presentes, sin heredadas) no se puede distinguir una columna `Fecha`, `Campaña` o `Detalle` propia del operador de una gestionada con datos de una prueba o de un envío anterior. Por eso no se bloquea: la validación y la confirmación listan en `overwriteRows` las filas a enviar que ya tienen valor en alguna de esas tres columnas, y la sidebar muestra el aviso `N filas que se van a enviar ya tienen valores en Fecha, Campaña o Detalle (por ejemplo, de una prueba); esos valores se reemplazarán: filas 2, 5, …` (hasta 20 y `y N filas más`) junto a la advertencia de envío. Nunca se muestran esos valores | Es el flujo normal después de una prueba (punto 5: se borra `Resultado` y se envía), así que bloquear lo rompería. El aviso hace visible la sobrescritura antes de la confirmación explícita; junto con D-35 (esas columnas no pueden ser marcadores) y D-34 (d) y (e) cubre los casos detectables sin destruir datos sin aviso |
+
+## Contratos
+
+### `Config.js`
+
+```js
+const HEADERS = { EMAIL: 'Email Address', ATTACHMENTS: 'File Attachments', DATE: 'Fecha', CAMPAIGN: 'Campaña', RESULT: 'Resultado', DETAIL: 'Detalle' };
+const MANAGED_HEADERS = [HEADERS.RESULT, HEADERS.DATE, HEADERS.CAMPAIGN, HEADERS.DETAIL]; // orden en que se agregan: Resultado primero (D-33, D-34 d)
+const LEGACY_HEADERS = { STATUS: 'Mail Merge Status', SCHEDULED: 'Scheduled Date' };     // solo para la migración
+const STATUS = { SKIP: 'SKIP', SENT: 'Email Sent', SENDING: 'ENVIANDO', REVIEW: 'REVISAR' }; // sin cambios
+const TEST_SUBJECT_PREFIX = '[PRUEBA] ';                                                      // sin cambios
+const LIMITS = {
+  MAX_TOTAL_ATTACHMENT_BYTES: 20 * 1024 * 1024, MAX_BODY_BYTES: 200 * 1024, MAX_RUNTIME_MS: 270000, LOCK_WAIT_MS: 10000, // sin cambios
+  CONFIRM_TTL_MS: 600000, PROGRESS_TTL_MS: 1800000, MAX_CONFIRM_ROWS: 500, MAX_CACHE_VALUE_BYTES: 90 * 1024,
+  MAX_DETAIL_CHARS: 300, MAX_CAMPAIGN_NAME_CHARS: 80,
+};
+const LEGACY_LOG_SHEET_NAME = 'Registro Mail Merge'; // reemplaza LOG_SHEET_NAME; se eliminan LOG_HEADERS
+const PROPERTY_KEYS = { SHEET_ID: 'MM_SHEET_ID', DRAFT_ID: 'MM_DRAFT_ID', FROM: 'MM_FROM', REPLY_TO: 'MM_REPLY_TO', CAMPAIGN_NAME: 'MM_CAMPAIGN_NAME' };
+const CACHE_PREFIX = { CONFIRMATION: 'MM_CONF_', PROGRESS: 'MM_PROG_' };
+const GOOGLE_EXPORTABLE_MIME_TYPES = [/* sin cambios */];
+```
+
+`config = { sheetId: number, draftId: string, from: string, replyTo: string, campaignName: string }` (`replyTo` y `campaignName` pueden ser `''`). `props.getConfig()` devuelve `campaignName: ''` si falta la propiedad (configuraciones V1 guardadas siguen funcionando).
+
+### Contrato de `deps` (cambios respecto de la V1)
+
+```js
+deps = {
+  sheets: {
+    listSheets(), readSheet(sheetId), readRow(sheetId, rowNumber, width), // sin cambios
+    writeCells(sheetId, rowNumber, cells),   // cells = [{ column (0-based), value }]; setValue en ese orden (strings neutralizados, D-38) y un flush final. Reemplaza writeStatus
+    writeHeaderCells(sheetId, cells),        // cells = [{ column (0-based), value }] en la fila 1; si column >= getMaxColumns() inserta columnas al final (insertColumnsAfter(maxColumns, faltantes)); flush final
+    // se eliminan appendLog y showLogSheet
+  },
+  gmail: { listDrafts(), getTemplate(draftId), getAliases(), send(message) }, // sin cambios
+  drive: { getFileInfo(fileId), getAttachment(fileInfo) },                    // sin cambios
+  lock: { tryLock(ms), release() },                                           // sin cambios
+  quota: { remaining() }, session: { userEmail() }, clock: { now() },         // sin cambios
+  props: { getConfig(), setConfig(config) },                                  // + campaignName
+  ids: { newCampaignId(), newToken() },                                       // newToken = Utilities.getUuid()
+  cache: { get(key) /* string | null */, put(key, value, ttlSeconds), remove(key) }, // CacheService.getUserCache()
+  crypto: { sha256Hex(text) },                                                // Utilities.computeDigest(SHA_256, text, UTF_8) → hex en minúsculas
+}
+```
+
+### Snapshot de confirmación (valor JSON en `MM_CONF_<token>`)
+
+```js
+{
+  v: 2,
+  kind: 'send' | 'test',
+  userEmail: 'operador@…',          // session.userEmail() al preparar
+  createdAt: 1700000000000, expiresAt: 1700000600000, // ms (clock.now)
+  config: { sheetId, draftId, from, replyTo, campaignName },
+  campaign: 'Nombre o ID',          // D-39
+  templateDigest: 'hex…',           // sha256Hex(report.templateKey)
+  rows: [[rowNumber, 'hex…'], …],   // sha256Hex(rowKey_) de cada fila confirmada, orden ascendente; kind 'test' → exactamente una
+  testTo: ''                        // kind 'test' → session.userEmail()
+}
+```
+
+`isValidToken_(token)`: texto con formato UUID (`/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`); cualquier otra cosa se rechaza sin tocar la caché.
+
+### Registro de progreso (valor JSON en `MM_PROG_<token>`)
+
+```js
+{
+  state: 'EN_CURSO' | 'TERMINADO',
+  kind: 'send' | 'test', campaign: '…',
+  counts: { total, processed, sent, skipped, review, pending }, // pending = total - processed
+  rows: [{ rowNumber, result, detail }],                       // sin recipient (D-46); result ∈ 'Email Sent' | 'OMITIDA' | 'NO ENVIADA' | 'ENVIANDO' | 'REVISAR'
+  rowsTruncated: false,                                        // true si se recortaron filas para no superar MAX_CACHE_VALUE_BYTES
+  stoppedReason: ''                                            // también redactado (D-46)
+}
+```
+
+`result` reutiliza los literales de `Resultado` (`Email Sent`, `ENVIANDO`, `REVISAR`) y las etiquetas V1 que no son estados de la hoja (`OMITIDA`, `NO ENVIADA`). `detail` y `stoppedReason` van saneados, sin URLs, cuerpo ni asunto, y con las direcciones de correo reemplazadas por `[dirección]` (D-46). El motor acumula internamente cada fila como `{ rowNumber, recipient, result, detail }` (`recipient` = dirección confirmada, `testTo` en la prueba, o `''` si la fila cambió y no se conoce) para `SendResultView`; `publishProgress_` quita `recipient` y redacta antes de publicar.
+
+### Funciones públicas (las llama la sidebar; todas en `Ui.js`)
+
+Cada una es `function nombre(arg) { return nombre_(createServices_(), arg); }`; los tests llaman a `nombre_` con falsos. Todos los `.js` comparten el espacio global de Apps Script (y el cargador de tests los ejecuta en un solo contexto, `Ui.js` último), así que dos funciones con el mismo nombre se pisan: `applyColumnSetup_(deps, expectedHeaderKey)` vive solo en `Setup.js` y `cancelConfirmation_(deps, token)` solo en `Confirmation.js`; `Ui.js` define sus envoltorios públicos pero no redefine esos `…_`. Los demás `…_` de la tabla (`getPanelState_`, `saveConfig_`, `validateCampaign_`, `prepareTestSend_`, `executeTestSend_`, `prepareSendPending_`, `executeSendPending_`, `getSendProgress_`) viven en `Ui.js` y delegan en `prepareConfirmation_`, `executeConfirmed_`, `readProgress_` y `buildValidationView_`. Ningún `…_` nuevo repite un nombre de otro archivo.
+
+| Función | Entrada | Salida | Efectos |
+|---|---|---|---|
+| `menuOpenPanel()` | — | — | Abre la sidebar (`HtmlService.createHtmlOutputFromFile('Sidebar').setTitle('Mail Merge')`) |
+| `getPanelState()` | — | `{ sheets, drafts, senders, current }` (como `getConfigOptions` V1, `current` con `campaignName`) | Solo lectura; no lee la pestaña |
+| `saveConfig(input)` | `{ sheetId, draftId, from, replyTo, campaignName }` | `config` guardado | Revalida como en la V1 + nombre de campaña (D-39); lanza `Error` en español |
+| `validateCampaign()` | — | `ValidationView` | Solo lectura: cero envíos, cero escrituras en hoja y en caché |
+| `applyColumnSetup(expectedHeaderKey)` | texto | `{ ok, errors, applied: { renames, appends } }` | Bajo lock; compare-and-set; escribe solo celdas de la fila 1 |
+| `prepareTestSend(rowNumber)` | entero ≥ 2 | `{ ok, errors, token, view: ConfirmationView }` | Guarda snapshot `kind: 'test'`; no escribe la hoja |
+| `executeTestSend(token)` | texto | `SendResultView` | Envía como mucho 1 correo a la cuenta propia |
+| `prepareSendPending()` | — | `{ ok, errors, token, view: ConfirmationView }` | Guarda snapshot `kind: 'send'`; no escribe la hoja |
+| `executeSendPending(token)` | texto | `SendResultView` | Envío real (Fase B) con progreso |
+| `getSendProgress(token)` | texto | `{ found, progress }` | Solo lee la caché; sin lock |
+| `cancelConfirmation(token)` | texto | `{ ok: true }` | Borra el snapshot si existe (sin lock; si ya se consumió, no hace nada) |
+
+Vistas (JSON plano, textos ya saneados):
+
+- `ValidationView = { ok, globalErrors[], setup: ColumnSetupPlan | null, sheetName, subject, from, replyTo, quotaRemaining, counts: { valid, invalid, excluded }, excludedByReason: [{ reason, count }], commonAttachments[], rows: [{ rowNumber, email, attachmentNames[] }], moreRows, invalidRows: [{ rowNumber, reasons[] }], moreInvalid, overwriteRows: [rowNumber] }` (`moreRows` = filas válidas que exceden `MAX_CONFIRM_ROWS`, de `buildRowReview_().more`; `overwriteRows` = filas válidas con valor en `Fecha`, `Campaña` o `Detalle`, en orden ascendente, D-47).
+- `ColumnSetupPlan = { needed, headerKey, renames: [{ column, from, to }], appends: [{ column, name }], errors[], blockedRows[] }` (`blockedRows` = filas de los bloqueos (c) y (e) de D-34, en orden ascendente y sin duplicados).
+- `ConfirmationView = { kind, campaign, sheetName, subject, from, replyTo, to /* solo test */, count, commonAttachments[], rows: [{ rowNumber, email, attachmentNames[] }], invalidCount, excludedCount, overwriteRows: [rowNumber], warning, expiresAtIso }` (`overwriteRows` = filas confirmadas con valor en `Fecha`, `Campaña` o `Detalle`, D-47; en la prueba, como mucho la fila probada). `warning` para `send`: `Se enviarán N correos reales. Esta acción no se puede deshacer.`; para `test`: `Se enviará 1 correo a tu cuenta (<cuenta>) con el asunto precedido por [PRUEBA]. La fila N quedará con Resultado = Email Sent y no se enviará al destinatario real hasta que borres ese resultado.`
+- `SendResultView = { ok, kind, campaign, counts, rows: [{ rowNumber, recipient, result, detail }], stoppedReason, summaryLines[] }` (mismo contenido que el progreso final pero con `recipient` y sin redactar, porque no se guarda en la caché (D-46), más líneas de resumen en español; D-13: "aceptados por Gmail", nunca "entregados").
+
+## Archivos afectados
+
+| Archivo | Cambio |
+|---|---|
+| `src/Config.js` | Constantes de "Contratos > Config.js" |
+| `src/Sheet.js` | `mapHeaders_` V2 (columnas `email`, `attachments`, `date`, `campaign`, `result`, `detail`; error si hay encabezados heredados; normalización `NFC` en `normalizeHeader_`); `classifyRows_` sin el criterio de `Scheduled Date`; `rowKey_(values, columns)` (D-36); nuevo `planColumnSetup_(sheetData)` puro |
+| `src/Setup.js` (nuevo) | `applyColumnSetup_(deps, expectedHeaderKey)` (lee `deps.props.getConfig()`) |
+| `src/Preflight.js` | `buildPreflight_` con encabezados V2, plan de columnas y marcadores reservados (D-35); `buildValidationView_(report)`, `buildRowReview_(report, limit)` y `findOverwriteRows_(rows, columns)` (D-47) estructurados; se eliminan `formatPreflightReport_` y `formatRowReview_` |
+| `src/Confirmation.js` (nuevo) | `isValidToken_`, `prepareConfirmation_(deps, kind, rowNumber)`, `takeConfirmation_(deps, token, kind)`, `cancelConfirmation_(deps, token)`, `publishProgress_` (seguro), `readProgress_` |
+| `src/Send.js` | `buildMessage_` sin cambios; `executeConfirmed_(deps, token, kind)` reemplaza `prepareSend_` / `executeSend_` / `runTestSend_`; `buildSendResultView_` reemplaza `formatSendSummary_`; se elimina `appendLogSafe_` |
+| `src/Services.js` | `writeCells`, `writeHeaderCells`, `cache`, `crypto`, `ids.newToken`, `campaignName` en `props`; se eliminan `writeStatus`, `appendLog`, `showLogSheet` |
+| `src/Ui.js` | `onOpen` con un ítem, `menuOpenPanel`, funciones públicas de la tabla y sus `…_` |
+| `src/Sidebar.html` | Panel completo (ver "Sidebar") |
+| `src/appsscript.json` | **Sin cambios** (ver "Scopes") |
+| `tests/helpers/fakes.js` | `writeCells` (con `failOn.writeCells = { value, rowNumber, afterWrite }`, que aplica cuando alguna celda de la llamada tiene ese `value`, igual que `failOn.writeStatus` V1), `writeHeaderCells` (con `failOn.writeHeaderCells`, que puede fallar después de escribir las primeras N celdas para simular una migración parcial), `cache` en memoria con desalojo e inyección de fallas, `crypto` con `node:crypto`, `ids.newToken`, `campaignName`; se eliminan `appendLog`, `showLogSheet`, `writeStatus`; `calls` con `cellWrites`, `headerWrites`, `cachePuts`, `cacheRemoves`, y `calls.sequence` registra también `cacheRemove` y `writeCells` (para verificar el orden consumo → claim → envío de AC-36) |
+| `tests/fixtures/campaign.js` | Encabezados V2 (`Email Address`, `First Name`, `Reference`, `File Attachments`, `Fecha`, `Campaña`, `Resultado`, `Detalle`) y `createLegacyFixture()` con los encabezados V1 para la migración |
+| `tests/helpers/fake-dom.js` (nuevo) | DOM mínimo para correr el `<script>` de la sidebar en `vm` (ver "Sidebar") |
+| `tests/sheet.test.js`, `tests/preflight.test.js`, `tests/send.test.js`, `tests/test-send.test.js`, `tests/ui.test.js`, `tests/services.test.js`, `tests/manifest.test.js` | Actualizados (ver "Escenarios de prueba") |
+| `tests/setup.test.js`, `tests/confirmation.test.js`, `tests/sidebar.test.js` (nuevos) | Ver "Escenarios de prueba" |
+| `docs/OPERATIONS.md`, `docs/ACCEPTANCE_STATUS.md`, `docs/DECISIONS.md`, `docs/PRODUCT.md` (tabla de compatibilidad), `AGENTS.md` (literales, alcance y, al cerrar la V2, "Estado del proyecto" y "Fuentes vigentes" apuntando también a este plan), `README.md` (si menciona el menú o el registro) | Documentación afectada |
+
+## Detalle del código
+
+### `Sheet.js`
+
+- `mapHeaders_(headerRow)` → `{ ok, columns: { email, attachments, date, campaign, result, detail }, byName, errors, legacy: { status, scheduled } }`. Requeridos: `Email Address` y las cuatro columnas gestionadas. `File Attachments` opcional. Si aparece `Mail Merge Status` o `Scheduled Date`, error `La pestaña tiene encabezados de la versión anterior; usá "Preparar columnas"` y su índice en `legacy`. Se mantienen los errores de duplicado normalizado y de encabezado ambiguo por capitalización/espaciado, ahora sobre todos los nombres conocidos (los seis de `HEADERS` y los dos heredados). `normalizeHeader_` aplica `normalize('NFC')` antes de recortar y pasar a minúsculas, para que un `Campaña` con la `ñ` descompuesta se reporte como ambiguo en lugar de pasar como columna desconocida.
+- `classifyRows_(sheetData, columns)`: motivos en orden `oculta por el usuario`, `oculta por un filtro`, `resultado: <valor>` (cualquier `Resultado` no vacío). Se elimina `Scheduled Date con valor`.
+- `rowKey_(values, columns)` → `JSON.stringify` de una copia con `columns.date`, `columns.campaign` y `columns.detail` en `''` (D-36).
+- `planColumnSetup_(sheetData)` → `ColumnSetupPlan`, sin efectos. Usa `values[0]` y la columna heredada de estado/fecha. `headerKey = JSON.stringify(values[0])`. `needed` es `false` si la hoja ya cumple `mapHeaders_` V2 (en ese caso no se evalúan bloqueos: D-47 cubre la hoja completa). Bloqueos (a) a (e) de D-34, evaluados sobre todas las filas, incluidas las ocultas; (e) solo considera las columnas `Fecha`, `Campaña` y `Detalle` que ya existen y las filas con `Resultado` vacío. Las columnas nuevas arrancan en `width = max(longitud de las filas de values)` y se asignan en el orden de `MANAGED_HEADERS` (`Resultado` primero).
+
+### `Setup.js`
+
+`applyColumnSetup_(deps, expectedHeaderKey)`:
+
+1. `config = props.getConfig()` (configuración incompleta → error sin lock ni escrituras). `tryLock(LIMITS.LOCK_WAIT_MS)`; si falla, `{ ok: false, errors: ['Hay otra ejecución en curso; reintentá en unos minutos'] }`.
+2. Dentro de `try/finally` con `release()`: `readSheet(config.sheetId)`, `planColumnSetup_`. Si `headerKey !== expectedHeaderKey` → `La fila de encabezados cambió; volvé a validar` sin escribir. Si el plan tiene errores → los devuelve sin escribir. Si `needed` es `false` → `ok` sin escribir.
+3. Una sola llamada `writeHeaderCells(sheetId, [...renames, ...appends])`, con `renames` en el orden de D-33 (`Resultado` antes que `Fecha`) y `appends` con `Resultado` primero si falta. Si lanza → `No se pudieron preparar todas las columnas; revisá la fila 1 y volvé a intentar (la operación se puede repetir)`.
+
+### `Preflight.js`
+
+- `buildPreflight_(deps, config)`: igual que en la V1 salvo: (a) si `mapHeaders_` falla por encabezados heredados o columnas gestionadas faltantes, agrega `report.setup = planColumnSetup_(sheet)`; (b) `validateTemplate_` agrega `La columna "X" la escribe Mail Merge y no se puede usar como marcador` para cada marcador que sea una columna gestionada; (c) `valid[i].key = rowKey_(values, headers.columns)`. `templateKey` sigue incluyendo `headers` (cualquier cambio de columnas entre fases cancela, D-15). (d) El error de configuración incompleta deja de decir `usá "Configurar campaña…"` (ese ítem de menú desaparece, D-25) y remite a la sección `Campaña` de la sidebar.
+- `buildValidationView_(report)` → `ValidationView`; `buildRowReview_(report, limit = LIMITS.MAX_CONFIRM_ROWS)` → `{ commonAttachments, rows, more }`. Mismo saneo que `formatRowReview_` V1 (nunca URLs ni IDs de Drive).
+- `findOverwriteRows_(rows, columns)` → números de fila (ascendentes) de las filas recibidas con valor no vacío en `columns.date`, `columns.campaign` o `columns.detail` (D-47). La usan `buildValidationView_` (sobre `report.valid`) y `prepareConfirmation_` (sobre las filas confirmadas); nunca devuelve los valores.
+
+### `Confirmation.js`
+
+- `prepareConfirmation_(deps, kind, rowNumber)`:
+  1. `config = props.getConfig()`; `report = buildPreflight_(deps, config)`. Con errores globales → `{ ok: false, errors }`.
+  2. `send`: filas = `report.valid`; si `length === 0` → `No hay correos para enviar`; si `> MAX_CONFIRM_ROWS` → `Hay N filas para enviar y el máximo por confirmación es 500. Usá un filtro para enviar por tandas` (D-41). `test`: `rowNumber` llega del `<input>` de la sidebar, así que se acepta un número entero o un texto de solo dígitos (`/^\d+$/` tras recortar, como `runTestSendFromUi_` V1) y se convierte con `Number`; cualquier otra cosa (texto no numérico, decimal, negativo, `null`) se rechaza sin tocar la caché; tiene que ser ≥ 2; la fila tiene que estar en `report.valid`; si no, el motivo exacto: en `excluded` (oculta o con resultado), en `invalid` (sus motivos), vacía o fuera de rango.
+  3. `campaign = config.campaignName || ids.newCampaignId()`; `token = ids.newToken()`; snapshot según el contrato (`testTo = session.userEmail()` en `test`). Si `JSON.stringify(snapshot)` supera `MAX_CACHE_VALUE_BYTES` (medido con `utf8ByteLength_`) → falla cerrado.
+  4. `cache.put(CACHE_PREFIX.CONFIRMATION + token, json, ceil(CONFIRM_TTL_MS / 1000))`; si lanza → `No se pudo guardar la confirmación; no se enviará nada`.
+  5. Devuelve `{ ok: true, token, view }` con `ConfirmationView` (incluido `overwriteRows = findOverwriteRows_(filas confirmadas, report.headers.columns)`, D-47).
+- `takeConfirmation_(deps, token, kind)` (se llama **con el lock tomado**) → `{ ok, snapshot, error }`. Rechaza en este orden: token con formato inválido (sin tocar la caché); entrada inexistente (`La confirmación venció o no es válida; volvé a revisar`); JSON inválido o `v !== 2` o campos faltantes o con forma inválida (`rows` vacío o desordenado, `test` con `rows.length !== 1` o `testTo` vacío); `kind` distinto; `userEmail` distinto de `session.userEmail()`; `clock.now() > expiresAt` (`La confirmación venció; volvé a revisar y confirmar`). En todos los casos con entrada existente, la borra. Si la verificación pasa, la borra (consumo); si `cache.remove` lanza → `ok: false` (no se envía nada).
+- `publishProgress_(deps, token, progress)` envuelve `cache.put(CACHE_PREFIX.PROGRESS + token, …, ceil(PROGRESS_TTL_MS / 1000))` en `try/catch` y nunca lanza. Antes de publicar arma las filas como `{ rowNumber, result, detail }` (sin `recipient`), reemplaza en `detail` y `stoppedReason` las direcciones de correo por `[dirección]` (D-46), recorta cada `detail` a `MAX_DETAIL_CHARS` y mide el JSON con `utf8ByteLength_`; si supera `MAX_CACHE_VALUE_BYTES`, publica los contadores completos y solo las últimas filas que entran, con `rowsTruncated: true` (sin esto, un `cache.put` de más de 100 KB lanzaría, el `try/catch` lo ocultaría y el progreso quedaría congelado). `SendResultView` siempre trae todas las filas. `readProgress_(deps, token)` valida el formato y devuelve `{ found, progress }`.
+
+### `Send.js` — `executeConfirmed_(deps, token, kind)` (Fase B)
+
+1. `startedAt = clock.now()` (D-30). Si `!isValidToken_(token)` → resultado `ok: false` sin lock.
+2. `tryLock(LOCK_WAIT_MS)`; si falla → `Hay otra ejecución en curso; reintentá en unos minutos` (snapshot sin consumir, D-45).
+3. Dentro de `try/finally`: `takeConfirmation_`; si falla → fin sin enviar.
+4. `config = props.getConfig()` igual a `snapshot.config` (D-43); `report = buildPreflight_`; errores globales → cancelación total; `sha256Hex(report.templateKey) !== snapshot.templateDigest` → cancelación total (D-15). En `test`, además `session.userEmail() === snapshot.testTo`.
+5. `publishProgress_` inicial (`EN_CURSO`, `total = snapshot.rows.length`).
+6. Por cada `[rowNumber, digest]` en orden ascendente, los pasos 3 a 9 de la V1 con estos cambios: la comparación es `sha256Hex(row.key) === digest` (fila actual válida y relectura con `readRow`); el claim, el éxito y `REVISAR` usan `writeCells` según D-37; en `test`, después de `buildMessage_`, `to = snapshot.testTo` y `subject = TEST_SUBJECT_PREFIX + subject`; la verificación posterior al envío compara `rowKey_` de la relectura con `rowKey_` de los valores confirmados con `Resultado = ENVIANDO` (las columnas informativas no cuentan). Se mantienen el corte por tiempo y por cuota (AC-22), la cuota desconocida (`QUOTA_UNKNOWN`), la detención ante claim fallido, excepción de Gmail, fila desplazada o falla al escribir el éxito.
+7. `publishProgress_` después de cada fila y al final (`TERMINADO`). Devuelve `buildSendResultView_(result)`.
+
+### `Services.js`
+
+- `writeCells`: `requireSheet`, para cada celda `getRange(rowNumber, column + 1).setValue(asSheetValue_(value))`, luego `SpreadsheetApp.flush()`. `asSheetValue_` = `asLogCell_` V1 renombrado (las `Date` pasan sin cambios).
+- `writeHeaderCells`: `maxColumns = sheet.getMaxColumns()`; si la mayor `column + 1` lo supera, `sheet.insertColumnsAfter(maxColumns, diferencia)`; `getRange(1, column + 1).setValue(value)` por celda; `flush()`.
+- `cache`: `CacheService.getUserCache()` resuelto al usarse; `put(key, value, seconds)` → `cache.put(key, value, seconds)`.
+- `crypto.sha256Hex(text)`: `Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)` y conversión de bytes con signo a hex de dos dígitos.
+- `ids.newToken()`: `Utilities.getUuid()`.
+
+### Sidebar
+
+Un solo archivo `src/Sidebar.html`, sin librerías. Secciones, de arriba hacia abajo:
+
+1. **Campaña:** selects de pestaña, borrador y remitente, inputs de Reply-To y nombre de campaña (opcional, con la ayuda "Si lo dejás vacío se genera un ID por envío"), botón `Guardar`.
+2. **Validación:** botón `Validar`; muestra la `ValidationView`. Si `setup.needed`, muestra qué se renombra y qué se agrega, los bloqueos y el botón `Preparar columnas`, que llama a `applyColumnSetup(setup.headerKey)` y luego vuelve a validar.
+3. **Prueba:** input numérico de fila y botón `Revisar prueba` → `prepareTestSend`; muestra la `ConfirmationView` con los botones `Enviar prueba` y `Cancelar`.
+4. **Envío:** botón `Revisar envío` → `prepareSendPending`; muestra la `ConfirmationView` (todas las filas) con `Enviar N correos` y `Cancelar`, y el aviso de sobrescritura de D-47 si `overwriteRows` no está vacío (también en la confirmación de la prueba y en la validación). El botón de confirmación se deshabilita al vencer `expiresAtIso` (solo comodidad: el servidor decide).
+5. **Progreso y resultados:** contadores (`Total`, `Procesadas`, `Aceptadas por Gmail`, `Omitidas`, `Para revisar`, `Pendientes`), barra de progreso (`<progress>`), tabla por fila (`Fila`, `Destinatario`, `Resultado`, `Detalle`) y el motivo de corte. Durante el sondeo, `Destinatario` sale de la `ConfirmationView` vigente unida por `rowNumber` (en la prueba, `view.to`), porque el progreso en caché no trae direcciones (D-46); al llegar `SendResultView`, la tabla se repinta con sus filas.
+
+Reglas del cliente: una sola operación de servidor a la vez por sección (botones deshabilitados mientras tanto); `execute…` se llama una sola vez por token; el sondeo usa `setTimeout` encadenado (la próxima llamada se agenda recién cuando volvió la anterior) y se detiene cuando `execute…` responde o falla; datos solo con `textContent`, `new Option` y `document.createElement`. Para que `tests/sidebar.test.js` pueda correr el script en `vm`, el código usa solo `document.getElementById`, `document.createElement`, `appendChild`, `removeChild`, `firstChild`, `textContent`, `value`, `max` (del `<progress>`), `disabled`, `hidden`, `className`, `addEventListener` (los botones son `type="button"`; si se usa un `<form>`, también `event.preventDefault`), `setTimeout`, `clearTimeout`, `new Option` y `select.add`, y expone sus manejadores en un objeto global `MailMergePanel` (sin efectos al cargarse salvo `getPanelState()` inicial).
+
+### Scopes
+
+Sin cambios en `src/appsscript.json`. `CacheService`, `Utilities.computeDigest` y `Utilities.getUuid` no deberían requerir scopes (a verificar en due diligence); `Sheet.insertColumnsAfter` y `getMaxColumns` quedan cubiertos por `spreadsheets.currentonly`. **Si la due diligence encuentra que algún método nuevo exige un scope adicional, se escala al usuario antes de implementar** (cambiar el manifest es un cambio de contrato).
+
+## Máquina de estados (`Resultado`)
+
+```text
+(vacío) ── validación fallida / fila omitida / claim fallido ──> sin cambios (solo sidebar)
+(vacío) ── Fase B (envío o prueba), fila idéntica, mensaje armado ──> ENVIANDO (+ Fecha, Campaña, Detalle)
+ENVIANDO ── Gmail aceptó + fila verificada ──> Email Sent (+ Detalle; en la prueba, Detalle de PRUEBA)
+ENVIANDO ── Gmail lanzó excepción ──> REVISAR (+ Detalle) y fin de la ejecución
+ENVIANDO ── corte, crash, fila desplazada o falla al persistir el éxito ──> queda ENVIANDO (revisión manual)
+SKIP / Email Sent / ENVIANDO / REVISAR / cualquier otro valor ──> excluido del envío y de la prueba
+Email Sent (de una prueba) ── el operador borra Resultado a mano ──> (vacío): elegible para el envío real
+```
+
+## Qué no cambia
+
+- `src/Template.js`, `src/Attachments.js` y `buildMessage_`; `parseDriveLinks_`, `classifyDriveFile_` y los límites existentes.
+- Los valores de estado (`SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR`) y `TEST_SUBJECT_PREFIX`.
+- La semántica del lock (documento, `LOCK_WAIT_MS`), la cancelación total por cambios globales (D-15), la detención ante resultados ambiguos (D-16), D-05, D-06, D-08 a D-11, D-13, D-19 a D-22, D-24.
+- `src/appsscript.json` y la lista de scopes; sin triggers, sin `UrlFetchApp`, sin `package.json`, sin dependencias ni frameworks, sin servicios externos.
+- Los datos de la pestaña `Registro Mail Merge` y los permisos de Drive.
+
+## Casos borde
+
+- Sidebar cerrada durante el envío → la ejecución del servidor sigue hasta terminar o cortar; el resultado queda en `Resultado` / `Detalle`. Al reabrir, la sidebar no recupera el progreso (no guarda el token): se documenta.
+- Doble clic en `Enviar N correos` → el botón se deshabilita al primer clic; si igual llegan dos llamadas, la segunda espera el lock y falla, o encuentra el snapshot consumido.
+- Dos pestañas del navegador del mismo usuario preparan dos confirmaciones sobre las mismas filas → la segunda ejecución encuentra las filas con `Resultado` no vacío y las omite como `Cambió después de la confirmación`.
+- Otro usuario envía la misma hoja → lock del documento, como en la V1; las cachés de usuario están aisladas y nadie puede usar el token de otro.
+- La caché desaloja el snapshot antes de tiempo → `La confirmación venció o no es válida`; cero envíos.
+- Token alterado en el cliente (otro UUID, texto arbitrario, token de una prueba usado en `executeSendPending`) → rechazo sin envíos.
+- La configuración (incluido el nombre de campaña) cambia en otra pestaña entre preparar y confirmar → cancelación total (D-43).
+- "Preparar columnas" mientras otro usuario envía → espera el lock; si corre entre la preparación y la ejecución de un envío, `templateKey` cambia (incluye encabezados) y el envío se cancela.
+- El operador edita a mano `Fecha`, `Campaña` o `Detalle` de una fila confirmada → no invalida la fila (D-36); editar cualquier otra columna, incluido `Resultado`, sí.
+- Hoja nueva solo con `Email Address` y variables → "Preparar columnas" agrega las cuatro columnas gestionadas, `Resultado` primero; si la escritura falla después de `Resultado`, la reanudación completa el resto sin caer en D-34 (d).
+- Hoja sin encabezados heredados ni `Resultado`, con una columna `Fecha`, `Campaña` o `Detalle` propia → migración bloqueada (D-34 d), con o sin datos en esa columna; el operador la renombra.
+- Hoja sin encabezados heredados, con `Resultado` (propio, o de una migración interrumpida) y una columna `Fecha` o `Detalle` propia, a la que le falta alguna gestionada: si esa columna tiene datos en alguna fila con `Resultado` vacío → migración bloqueada (D-34 e) con la columna y las filas; si solo tiene datos en filas con `Resultado` no vacío → se adopta (esas filas nunca se escriben mientras `Resultado` tenga valor) y la migración agrega lo que falta. Una migración interrumpida legítima nunca cae en (e): sus columnas agregadas están vacías y su `Fecha` renombrada solo tiene valores en filas con estado (por D-34 c).
+- Hoja completa (las cuatro gestionadas, sin heredadas) donde `Fecha`, `Campaña` o `Detalle` son en realidad columnas propias del operador → no se puede distinguir de una hoja V2 con datos de una prueba; no se bloquea, pero `{{Fecha}}` y similares son error global (D-35) y la validación y la confirmación avisan qué filas a enviar tienen valores que se reemplazarán (D-47). Riesgo residual documentado en `docs/OPERATIONS.md`: un operador que ignore el aviso pierde esos valores en las filas que confirme.
+- Hoja sin encabezados heredados pero con una columna `Resultado` propia del operador → se adopta como columna de resultado; sus filas con valor quedan excluidas y el script solo escribe en celdas vacías de esa columna (dirección segura).
+- Hoja V1 con una columna `Fecha` propia del operador (por ejemplo, usada en `{{Fecha}}`) → migración bloqueada (D-34 b); en una hoja ya V2, `{{Fecha}}` es error global (D-35).
+- Después de una prueba se borra `Resultado` para el envío real → la confirmación avisa que esa fila tiene valores en `Fecha`, `Campaña` y `Detalle` que se reemplazarán (D-47); el envío sigue normalmente.
+- Una excepción de Gmail que cita la dirección del destinatario → el `Detalle` de la hoja y `SendResultView` la conservan; el progreso en caché la publica como `[dirección]` (D-46).
+- Columna con datos pero sin encabezado a la derecha de los encabezados → las columnas nuevas van después de ella (D-33), nunca encima.
+- Filtro activo en la hoja al agregar columnas → las columnas nuevas quedan fuera del rango del filtro; las filas ocultas siguen ocultas (PENDING LIVE VALIDATION).
+- Rango protegido en la fila 1 → `writeHeaderCells` lanza; la migración informa y se puede repetir.
+- Más de 500 filas válidas → `prepareSendPending` falla cerrado con la guía de enviar por tandas.
+- Prueba sobre una fila ya `Email Sent` (por una prueba anterior) → rechazada con `resultado: Email Sent`; para repetirla hay que borrar `Resultado`.
+- Prueba exitosa y luego `Enviar pendientes` → esa fila no se envía; después de borrar `Resultado`, sí (y `Fecha` / `Campaña` / `Detalle` de la prueba se sobrescriben).
+- `getSendProgress` llega antes de la primera publicación → `found: false`; la sidebar muestra `Esperando el inicio del envío…`.
+- El sondeo no corre en paralelo con `execute…` en el runtime real → la sidebar muestra el resultado final al terminar (degradación aceptada; PENDING LIVE VALIDATION).
+
+## Escenarios de prueba
+
+Herramientas, cargador `vm`, helper `plain` y convenciones de la V1 sin cambios. Los títulos llevan el ID cubierto. "Cero escrituras" significa `calls.cellWrites` y `calls.headerWrites` vacíos.
+
+### Regresión V1 (se adaptan sin perder el caso)
+
+| Test | Cubre |
+|---|---|
+| AC-01 a AC-09, AC-13, AC-14, D-21, D-22: mismos casos sobre el fixture V2 | Plantillas, adjuntos estrictos, destinatario, remitente, cuerpo, cuenta |
+| AC-10: `SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR` y texto arbitrario en `Resultado` → excluidas con `resultado: <valor>`, en validación, envío y prueba | Exclusión de todo resultado no vacío |
+| AC-11: filas ocultas por usuario y por filtro excluidas de validación, envío y prueba | Filas ocultas |
+| AC-12: duplicados, faltantes y ambigüedad sobre los seis encabezados; `Campaña` con `ñ` descompuesta → ambiguo | Encabezados |
+| AC-15 / AC-16: la prueba arma el mismo mensaje que el envío real salvo `to` y `[PRUEBA] `; con un adjunto faltante no se prepara confirmación ni se envía | Prueba |
+| AC-18: lock no disponible en `executeConfirmed_` → cero envíos y cero escrituras, y el snapshot sigue en la caché (D-45); dos ejecuciones secuenciales con tokens distintos → un solo envío por fila | Lock |
+| AC-19 a AC-22: las mismas inyecciones de falla con `failOn.writeCells` (claim con y sin `afterWrite`, falla al escribir `Email Sent`, excepción de Gmail, tiempo y cuota). Como `startedAt` ahora se toma dentro de `executeConfirmed_` (D-30), el corte por tiempo se prueba con un reloj que avanza (`now` como función en los falsos), no fijando el reloj antes de llamar | Checkpoint `ENVIANDO`, `REVISAR`, cortes |
+| AC-23 a AC-25: ediciones y reordenamientos entre `prepare…` y `execute…` y durante el recorrido; re-ejecución sin duplicados | Revalidación entre fases |
+| D-15: plantilla modificada entre fases → cancelación total | Revalidación |
+| Fase B paso 8: fila insertada arriba después del envío → no escribe `Email Sent` en otra fila, `REVISAR` en el resultado y detención | Fila desplazada |
+| AC-28: manifest con los seis scopes exactos; ningún archivo de `src/` usa `UrlFetchApp`, `ScriptApp.newTrigger` ni `setSharing` | Manifest |
+
+### Nuevos
+
+| Test | Cubre |
+|---|---|
+| Ningún `src/*.js` contiene `.alert(`, `.prompt(` ni `ButtonSet`; `src/Sidebar.html` no contiene `innerHTML` ni llamadas a `alert`, `confirm` o `prompt` (regex con límite de palabra, `/\b(alert|confirm|prompt)\s*\(/`, para no confundirlas con nombres como `cancelConfirmation(`); `onOpen` agrega un solo ítem `Abrir Mail Merge` | AC-32 |
+| `validateCampaign_` → cero `send`, cero escrituras, cero `cache.put` y `cache.remove`; la vista lista todas las filas válidas con destinatario y nombres de adjuntos, sin URLs ni IDs | AC-33, D-42 |
+| `prepareSendPending_` → token UUID, una entrada `MM_CONF_<token>` con TTL 600 s, snapshot con exactamente las claves del contrato y sin valores de filas (solo digests: no contiene direcciones de destinatarios, variables ni enlaces; sí `userEmail`, `from` y `replyTo`, como documenta D-27), vista con campaña, conteo, todas las filas y advertencia; cero envíos y cero escrituras | AC-34, D-26, D-27 |
+| `executeConfirmed_` con token `undefined`, `'abc'`, un UUID inexistente, snapshot vencido (`clock` > `expiresAt`), entrada desalojada, `kind` distinto, `userEmail` distinto, JSON truncado y `v: 1` → cero envíos y cero escrituras, con su mensaje | AC-35 |
+| Mismo token dos veces → la segunda no envía; el snapshot se borra antes del primer `writeCells` (orden en `calls.sequence`); `cache.remove` que lanza → cero envíos | AC-36, D-28 |
+| Cambio de `from`, `replyTo`, `draftId`, `sheetId` o `campaignName` entre `prepare…` y `execute…` → cancelación total | AC-37, D-43 |
+| Progreso: una publicación inicial, una por fila y una final; `processed` crece de a uno; el último registro coincide con el resultado devuelto; `getSendProgress_` lo lee; `cache.put` de progreso que lanza → mismos envíos y escrituras que sin falla; con detalles largos que superarían `MAX_CACHE_VALUE_BYTES` (límite reducido en un contexto propio) se publica un registro dentro del límite con `rowsTruncated: true` y contadores completos; ningún valor publicado en `MM_PROG_` tiene la clave `recipient` ni contiene `@example.test` (tampoco con una excepción de Gmail cuyo mensaje cita `beta@example.test`, que se publica como `[dirección]`, ni en la prueba, cuyo `Detalle` nombra la cuenta), mientras que `SendResultView` sí trae `recipient` y el detalle sin redactar | AC-38, D-29, D-46 |
+| Resultado por fila: `Email Sent`, `OMITIDA`, `NO ENVIADA`, `ENVIANDO`, `REVISAR` con detalle; ningún texto contiene cuerpo, asunto renderizado, `drive.google.com` ni valores de `First Name` / `Reference` | AC-39 |
+| Claim: `writeCells` con `Fecha` (`isDate`), `Campaña`, `Detalle`, `Resultado = ENVIANDO`, en ese orden; éxito: `Detalle` y luego `Resultado = Email Sent`; excepción de Gmail: `Detalle` y luego `REVISAR`; fila omitida y claim fallido sin escrituras | AC-40, D-37 |
+| Adaptador `writeCells`: `=X`, `+X`, `-X`, `@X` se escriben con `'`; las `Date` y los números pasan sin cambios; un solo `flush` después de todas las celdas | AC-41, D-38 |
+| Migración V1 → V2 (`createLegacyFixture`): renombra `Mail Merge Status` → `Resultado` y `Scheduled Date` → `Fecha` en el lugar, agrega `Campaña` y `Detalle` a la derecha; todas las celdas de datos idénticas antes y después; con columna de datos sin encabezado a la derecha, las nuevas van después | AC-42, D-33 |
+| Migración bloqueada, cero `writeHeaderCells`: (a) `Mail Merge Status` + `Resultado` y `Scheduled Date` + `Fecha`; (b) V1 con `Campaña` preexistente; (c) fila con `Scheduled Date` y estado vacío (incluida una oculta), con la lista de filas; (d) sin heredadas ni `Resultado`, con `Fecha` propia (con y sin datos) y con `Detalle` propia; (e) sin heredadas, con `Resultado`, sin `Campaña` y con `Fecha` propia que tiene valor en una fila con `Resultado` vacío (también oculta), con la columna y las filas en el error y en `blockedRows`; `expectedHeaderKey` distinto; lock no disponible | AC-43, D-34, AC-53 |
+| (e) no bloquea lo seguro: sin heredadas, con `Resultado` y `Detalle` propia con valores solo en filas con `Resultado` no vacío → se adopta y la migración agrega `Fecha` y `Campaña` sin tocar esas celdas | AC-43, D-34 |
+| Migración idempotente: segunda ejecución sin cambios; `writeHeaderCells` escribe `Resultado` antes que `Fecha`; desde un estado parcial completa lo que falta (en particular `Resultado` + `Scheduled Date` tras fallar después del primer renombre, sin caer en D-34, y con la regla (c) evaluada sobre `Resultado`; y `Resultado` + `Fecha` renombrada con valores solo en filas con estado, sin caer en (e)); hoja sin columna de estado ni heredada → agrega las cuatro con `Resultado` primero, y si falla después de la primera celda la reanudación completa `Fecha`, `Campaña` y `Detalle` sin caer en (d); `writeHeaderCells` que lanza → error que invita a repetir | AC-44 |
+| Validación con encabezados V1 → error global + `setup` con renombres y agregados; `{{Resultado}}` o `{{Fecha}}` en la plantilla → error global | AC-45, D-35 |
+| Campaña: `saveConfig_` sanea el nombre y rechaza más de 80 caracteres; nombre vacío → `newCampaignId` en `prepare…`, el mismo ID en la vista, el snapshot y la columna `Campaña` de todas las filas; dos preparaciones sin nombre → IDs distintos; con nombre → se usa el nombre; configuración V1 guardada sin `MM_CAMPAIGN_NAME` → `campaignName: ''` | AC-46, D-39 |
+| Prueba: `prepareTestSend_(2)` + `executeTestSend_` → un `send` a `operator@example.test` con asunto `[PRUEBA] …`; la fila queda `Resultado = Email Sent` con `Detalle` de prueba; `prepareSendPending_` posterior la excluye; después de `setCell(2, 'Resultado', '')`, el envío real la incluye y la manda al destinatario real | AC-47, D-40 |
+| Prueba rechazada sin token ni envío: fila oculta, `Resultado` no vacío, fila inválida, fila 1, fuera de rango, vacía, texto no numérico, decimal; `prepareTestSend_('2')` (texto del `<input>`) se acepta igual que `2` | AC-48 |
+| `applyColumnSetup_` toma el lock con `LOCK_WAIT_MS` y lo libera una vez, también cuando `writeHeaderCells` lanza; lock no disponible → cero `writeHeaderCells` y el mensaje de otra ejecución en curso | AC-53 |
+| Más de `MAX_CONFIRM_ROWS` filas válidas (límite reducido en un contexto propio) o snapshot por encima de `MAX_CACHE_VALUE_BYTES` → `ok: false`, sin `cache.put`; `cache.put` que lanza → `ok: false` | AC-49, D-41 |
+| `rowKey_`: cambiar `Fecha`, `Campaña` o `Detalle` no cambia la clave; cambiar `Resultado` u otra columna sí | AC-50, D-36 |
+| Sobrescritura visible: en una hoja completa, una fila válida con valor en `Fecha`, `Campaña` o `Detalle` aparece en `overwriteRows` de la `ValidationView` y de la `ConfirmationView` (envío y prueba) y las filas con esas columnas vacías no; las vistas no contienen esos valores; después de una prueba y de borrar `Resultado`, la confirmación del envío real lista esa fila y el envío la sobrescribe con normalidad | AC-54, D-47 |
+| `getPanelState_` no ofrece `Registro Mail Merge`; ninguna operación escribe en esa pestaña (su contenido en el fixture queda idéntico) | AC-51, D-32 |
+| Sidebar (`tests/sidebar.test.js`, DOM falso): al cargar llama a `getPanelState`; `Enviar N correos` deshabilitado hasta un `prepareSendPending` exitoso; el clic llama a `executeSendPending` con exactamente el token recibido; un segundo clic no genera otra llamada; mientras `execute…` está pendiente se agenda un solo `getSendProgress` a la vez y los contadores se actualizan, con `Destinatario` tomado de la `ConfirmationView` por `rowNumber` (el progreso falso no trae direcciones, D-46); el aviso de D-47 aparece cuando `overwriteRows` no está vacío; al responder `execute…` se detiene el sondeo y se pinta el resultado final; una falla de `execute…` muestra la guía de D-45 y no vuelve a llamar; `Cancelar` llama a `cancelConfirmation` | AC-52, D-45 |
+| Servicios: `cache` usa `getUserCache`; `crypto.sha256Hex('abc')` devuelve `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` con un `Utilities.computeDigest` falso que devuelve los bytes con signo; `writeHeaderCells` inserta columnas cuando hace falta; `props` lee y guarda `campaignName` | Adaptadores |
+
+AC-17 (V1: `confirm` falso) queda cubierto por AC-35 / AC-52; AC-26 por AC-39 / AC-41; AC-27 por AC-33; AC-31 (V1: `Scheduled Date` excluye) se retira y lo reemplaza AC-43 (la migración no vuelve enviables esas filas). `docs/ACCEPTANCE_STATUS.md` registra esa correspondencia.
+
+### Tests V1 que se retiran o se invierten (por decisión, no para que pasen)
+
+Estos tests prueban comportamiento que la V2 elimina o cambia a propósito; se borran o se reescriben con el ID de la decisión que los reemplaza, y `docs/ACCEPTANCE_STATUS.md` deja de citarlos:
+
+- `tests/sheet.test.js`: "D-03 (AC-31)" (dos tests) → retirados (AC-43); "rechaza la falta de Mail Merge Status" y "sin Scheduled Date ni File Attachments…" → reescritos sobre `Resultado` y las columnas gestionadas (AC-12); "D-14: rowKey_…" → reescrito como D-36 / AC-50.
+- `tests/preflight.test.js`: "D-23: formatRowReview_…" (dos tests) y "formatPreflightReport_…" (dos tests) → reemplazados por `buildRowReview_` / `buildValidationView_` (D-42, AC-33); el corte en 20 filas deja de existir.
+- `tests/send.test.js`: "prepareSend_ (Fase A)…" (dos tests) → AC-34; "AC-26: las entradas de registro…" → AC-39 / AC-41; "D-18: una falla del registro…" → retirado (no hay registro); "D-13: formatSendSummary_…" → reescrito sobre `buildSendResultView_` (D-13 sigue vigente).
+- `tests/test-send.test.js`: "D-07: runTestSend_ envía con una fila no elegible (Email Sent)…" → **invertido** por D-40 (AC-48: se rechaza); "Gmail que lanza en la prueba devuelve error sin escribir estado" → **invertido** por D-40 (la fila queda `REVISAR`); "D-07: runTestSend_ rechaza la fila 1…" → AC-48; "D-18" (dos tests, incluido `appendLogSafe_`) → retirados; los de `buildMessage_` (AC-05 a AC-09) se conservan.
+- `tests/ui.test.js`: `onOpen` con cinco ítems → AC-32; `createUi_`, `runValidate_`, `runSendPending_`, `runTestSendFromUi_` y `menuShowLog` → retirados (AC-17 pasa a AC-35 / AC-52); `getConfigOptions` / `saveConfig` → `getPanelState_` / `saveConfig_` con `campaignName` (AC-46, AC-51); "Sidebar.html no usa innerHTML y llama a getConfigOptions…" → AC-32 / AC-52.
+- `tests/services.test.js`: "R-12: writeStatus…" → `writeCells` (AC-41); "D-17: appendLog…", "AC-26: appendLog neutraliza…" y "showLogSheet…" → retirados (la neutralización pasa a AC-41); "D-08: props.setConfig guarda las cuatro claves…" → cinco claves con `MM_CAMPAIGN_NAME`.
+- `tests/manifest.test.js`: "D-01 (AC-28): constantes literales" → actualizado a `HEADERS.RESULT = 'Resultado'` y `LEGACY_HEADERS` (D-31).
+
+## Criterios de aceptación verificables
+
+1. `node --test` pasa completo, sin red ni credenciales, con los tests de regresión y los nuevos AC-32 a AC-54.
+2. `grep` sobre `src/` sin coincidencias para `\.alert(`, `\.prompt(`, `ButtonSet`, `innerHTML`, `UrlFetchApp`, `newTrigger`, `setSharing`, `appendLog`, `LOG_HEADERS` (verificado también por AC-32 y AC-28).
+3. `src/appsscript.json` idéntico al de la V1 (`git diff --exit-code src/appsscript.json`).
+4. `docs/ACCEPTANCE_STATUS.md` con AC-01 a AC-54, cada uno con su test o su retiro justificado; nivel `LOCAL_VERIFIED`.
+5. `docs/OPERATIONS.md` describe el panel, las columnas, "Preparar columnas", la prueba que deja `Email Sent`, la conciliación con `Detalle` y la checklist en vivo actualizada.
+6. `AGENTS.md` y `docs/DECISIONS.md` reflejan los literales nuevos y las decisiones D-25 a D-47 aprobadas (D-34 (e) y D-47, una vez confirmadas).
+
+## Orden incremental
+
+Cada tarea deja la suite en verde y termina en un commit local (Conventional Commits en español, stage por nombre).
+
+1. **Constantes, encabezados V2, clave de fila y plan de columnas** (`Config.js`, `Sheet.js`, fixture V2 y legado, ajuste de los tests que dependen de encabezados).
+2. **Migración** (`Setup.js`, `writeHeaderCells` en `Services.js` y en los falsos, `tests/setup.test.js`).
+3. **Validación V2 y vistas** (`Preflight.js`, `writeCells` en falsos y adaptadores, tests de validación).
+4. **Confirmación y progreso** (`Confirmation.js`, `cache` / `crypto` / `newToken`, `tests/confirmation.test.js`).
+5. **Motor de envío V2 y prueba** (`Send.js`, `tests/send.test.js`, `tests/test-send.test.js`).
+6. **Funciones públicas y sidebar** (`Ui.js`, `Sidebar.html`, `tests/helpers/fake-dom.js`, `tests/sidebar.test.js`, `tests/ui.test.js`, `tests/manifest.test.js`).
+7. **Documentación y verificación final** (`docs/OPERATIONS.md`, `docs/ACCEPTANCE_STATUS.md`, `docs/DECISIONS.md`, `docs/PRODUCT.md`, `AGENTS.md`, `README.md`).
+
+## Verificación
+
+Desde la raíz del proyecto, con Node portable en el PATH del proceso (ver `CLAUDE.md`):
+
+- `node --test` → todos los tests pasan.
+- `node --check` sobre cada `src/*.js` y `tests/**/*.js` modificado o nuevo.
+- `git diff --check`, `git status --short`, `git remote -v` (vacío), `git diff --exit-code src/appsscript.json`.
+- Sin `clasp`, sin OAuth, sin envíos ni acceso a Google.
+- Informe de cierre según `AGENTS.md`: archivos y commits, resultados reales de los comandos, criterios cubiertos, riesgos y lo que queda separado en **comprobado localmente**, **pendiente en Google** y **no probado**.
+
+## Pendiente de validación en vivo (`PENDING LIVE VALIDATION`)
+
+Se suma a la checklist V1 de `docs/OPERATIONS.md` (los ítems de `Ui.alert` se reemplazan):
+
+- Que `google.script.run` ejecute `getSendProgress` en paralelo con `executeSendPending` y que el progreso se vea en tiempo real.
+- Comportamiento real de `CacheService.getUserCache()` (aislamiento por usuario, vencimiento, desalojo) y que no pida scopes adicionales.
+- `Utilities.computeDigest` con `Charset.UTF_8` y la conversión a hex frente al valor esperado.
+- Renombre de encabezados e inserción de columnas con filtros, rangos protegidos y formato condicional reales.
+- Aspecto y usabilidad de la sidebar (300 px de ancho) con 500 filas en la confirmación.
+- Texto mostrado de `Fecha` según el formato y la zona horaria de la hoja.
+- Tiempo real de cada `getSendProgress` y su efecto sobre la cuota de ejecuciones.
+
+## Hechos externos a verificar en due diligence
+
+- Límites de `CacheService`: 100 KB por valor, 250 caracteres por clave, vencimiento máximo de 21 600 s, desalojo *best effort*, `getUserCache()` aislada por usuario y script; si requiere scope.
+- Límites de `PropertiesService` usados en la comparación (9 KB por valor, 500 KB por almacén, cuota diaria).
+- `google.script.run`: asincronía, posibilidad de varias llamadas simultáneas, tipos admitidos en argumentos y retornos (sin `Date`).
+- Límite de 30 ejecuciones simultáneas por usuario y de 6 min por ejecución.
+- `Utilities.computeDigest(DigestAlgorithm.SHA_256, String, Charset.UTF_8)` devuelve `Byte[]` con signo; `Utilities.getUuid()`.
+- `Sheet.insertColumnsAfter`, `getMaxColumns` y `Range.setValue` bajo `spreadsheets.currentonly`.
+- `HtmlService` sidebar: ancho fijo, `setTimeout` disponible en el iframe, `google.script.host.close()`.
+
+## Due diligence record
+
+Registro de lo que concluyó la verificación de hechos externos del 2026-11-09 contra la documentación pública de Google (developers.google.com); lo leen las pasadas posteriores, incluida la verificación de hechos de la implementación.
+Ninguna pasada puede usar una línea de esta sección como motivo para saltarse una verificación: el registro dice lo que se concluyó una vez, no lo que es cierto hoy.
+Si una persona edita a mano el hecho correspondiente en el plan, tiene que **borrar** la línea de este registro en lugar de actualizarla, para que la sección no afirme cosas que nadie verificó.
+
+- SETTLED: `100KB` por valor, clave de hasta `250` caracteres, vencimiento entre `1` y `21600` s, y los datos pueden desalojarse antes del vencimiento (verified against developers.google.com/apps-script/reference/cache/cache).
+- SETTLED: los TTL `ceil(CONFIRM_TTL_MS / 1000)` = `600` s y `ceil(PROGRESS_TTL_MS / 1000)` = `1800` s están dentro del rango `1`–`21600` s (verified against developers.google.com/apps-script/reference/cache/cache).
+- SETTLED: cada caché admite hasta 1000 elementos; al superarlos conserva los 900 más lejanos de su vencimiento, así que una confirmación de 10 min se desaloja antes que un progreso de 30 min (verified against developers.google.com/apps-script/reference/cache/cache).
+- SETTLED: `CacheService.getUserCache()` devuelve una caché aislada por usuario actual y por script (verified against developers.google.com/apps-script/reference/cache/cache-service).
+- SETTLED: las referencias de `CacheService`/`Cache` y de `Utilities` no indican ningún scope de autorización para `getUserCache`, `get`, `put`, `remove`, `computeDigest` ni `getUuid`; no hace falta cambiar `src/appsscript.json` (verified against developers.google.com/apps-script/reference/cache/cache, .../cache/cache-service y .../utilities/utilities).
+- SETTLED: `PropertiesService`: `9 KB / val`, `500 KB / property store`, lecturas y escrituras `50,000 / day` (consumidor) y `500,000 / day` (Workspace) (verified against developers.google.com/apps-script/guides/services/quotas).
+- SETTLED: `6 min / execution`, `30 / user` ejecuciones simultáneas por usuario y `1,000` por script (verified against developers.google.com/apps-script/guides/services/quotas).
+- SETTLED: `google.script.run` es asíncrono, sin orden garantizado entre llamadas simultáneas, y permite 10 llamadas concurrentes al servidor (el navegador puede imponer menos, por ejemplo 6 en Firefox); una llamada `execute…` y un `getSendProgress` a la vez caben en ese límite (verified against developers.google.com/apps-script/guides/html/communication).
+- SETTLED: argumentos y retornos de `google.script.run`: primitivos, `null` y objetos o arreglos formados solo con esos tipos; `Date` y `Function` son ilegales, `undefined` dentro de un arreglo llega como `null` y los objetos se copian (verified against developers.google.com/apps-script/guides/html/reference/run).
+- SETTLED: `Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)` existe con esa firma y devuelve `Byte[]` (verified against developers.google.com/apps-script/reference/utilities/utilities).
+- SETTLED: `Utilities.getUuid()` devuelve un `String` equivalente a `java.util.UUID.randomUUID()`, cuya forma textual es `8-4-4-4-12` en hexadecimal y encaja en el regex de `isValidToken_` (verified against developers.google.com/apps-script/reference/utilities/utilities).
+- SETTLED: `Utilities.computeHmacSha256Signature` existe, que es lo que supone la alternativa A descartada (verified against developers.google.com/apps-script/reference/utilities/utilities).
+- SETTLED: `Sheet.insertColumnsAfter`, `Sheet.getMaxColumns`, `Sheet.getDataRange` y `Range.setValue` aceptan `https://www.googleapis.com/auth/spreadsheets.currentonly` (verified against developers.google.com/apps-script/reference/spreadsheet/sheet y .../spreadsheet/range).
+- SETTLED: `Ui.showSidebar` requiere `https://www.googleapis.com/auth/script.container.ui` (ya está en el manifest), las sidebars de scripts tienen `300` píxeles de ancho, abrir una no suspende el script y la sidebar puede cerrarse con `google.script.host.close()` (verified against developers.google.com/apps-script/reference/base/ui y developers.google.com/apps-script/guides/dialogs).
+- OPEN (unverified): que los `Byte[]` de `computeDigest` vengan con signo (−128 a 127); la referencia oficial no lo dice y solo lo afirman fuentes de la comunidad, aunque una conversión con `(b & 0xff)` da el hex correcto en ambos casos.
+- OPEN (unverified): `setTimeout` dentro del iframe de `HtmlService`; Google no lo documenta para el sandbox (solo dice que tiene `allow-scripts`), así que se supone disponible como API estándar del navegador.
+- OPEN (unverified): tamaño máximo de los argumentos y retornos de `google.script.run`; no está documentado y afecta a la `ConfirmationView` / `ValidationView` de hasta 500 filas que se devuelven a la sidebar.
+- OPEN (unverified): que el runtime real ejecute `getSendProgress` en paralelo con `executeSendPending`; la documentación permite 10 llamadas concurrentes, pero el comportamiento queda PENDING LIVE VALIDATION.
+
+## Implementation steps
+
+Convenciones comunes a todos los pasos:
+
+- **Decisiones:** el usuario aprobó el 2026-11-09 D-31 (incluida la modificación de contrato de literales), D-34 (a) a (d), D-39 y D-46. D-34 (e) y D-47 están `PROPUESTA`: se confirman antes del paso 2. Si el usuario las rechaza, ajustar el paso 2 (quitar (e) y sus tests de AC-43 / AC-44) y los pasos 3, 4 y 8 (quitar `overwriteRows`, `findOverwriteRows_`, el aviso y AC-54). Si cambia otra decisión, ajustar el paso afectado (D-31: paso 1; D-34: paso 2; D-39: pasos 4 y 7; D-46: pasos 4, 6 y 8).
+- Node portable en el PATH solo del proceso (Git Bash): `export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH"`. Todos los comandos se ejecutan desde la raíz del proyecto. Sin `npm install`, sin `package.json`, sin `clasp`, sin OAuth, sin envíos ni acceso a Google, sin remotos.
+- Los archivos de `src/` son scripts globales de Apps Script (sin `require` ni `module.exports`). El cargador de tests los ejecuta en orden alfabético en un solo contexto (`Attachments`, `Config`, `Confirmation`, `Preflight`, `Send`, `Services`, `Setup`, `Sheet`, `Template`, `Ui`): ningún nombre de nivel superior puede repetirse entre archivos (`applyColumnSetup_` solo en `Setup.js`, `cancelConfirmation_` solo en `Confirmation.js`). Los archivos de `tests/` son CommonJS.
+- Tests primero en cada paso. Los títulos llevan el ID que cubren (`AC-xx`, `D-xx`, `R-xx`). Los helpers de test no se nombran `*.test.js` ni `test-*.js`. Para reducir un límite se usa un contexto propio (`vm.runInContext('LIMITS.MAX_CONFIRM_ROWS = 2', ctx)`). Solo datos ficticios.
+- Cada paso deja `node --test` completo en verde. Los tests V1 de "Tests V1 que se retiran o se invierten" se retiran o se reescriben en el paso que lo indica, por decisión; ningún otro test se modifica solo para que pase (los renombres mecánicos de encabezados del paso 1 no cambian lo que el test verifica).
+- **Convivencia transitoria con la ruta V1:** el menú de cinco ítems, `createUi_` y los controladores `run…_` de `Ui.js`, `prepareSend_` / `executeSend_` / `sendConfirmedRows_` / `runTestSend_` / `appendLogSafe_` / `formatSendSummary_` de `Send.js`, `formatPreflightReport_` / `formatRowReview_` de `Preflight.js`, `writeStatus` / `appendLog` / `showLogSheet` de `Services.js` y de los falsos, y `LOG_SHEET_NAME` / `LOG_HEADERS` de `Config.js` siguen funcionando hasta el paso 7, que los elimina junto con sus últimos llamadores. En los pasos 1 a 6 ese código solo recibe las adaptaciones mínimas que cada paso indica, y el código V2 nuevo nunca lo llama. Los tests nuevos o portados usan `calls.cellWrites` / `calls.headerWrites`, no `statusWrites` / `logEntries`.
+- Un commit local por paso (lo hace quien orquesta la implementación): Conventional Commits en español, stage por nombre de archivo, `git diff --cached` revisado, nunca `--no-verify`. Cada paso sugiere un mensaje.
+- Estos pasos refinan la sección "Orden incremental", que queda como referencia: su tarea 5 se divide en los pasos 5 (motor de envío) y 6 (progreso y prueba) y su tarea 6 en los pasos 7 (funciones públicas y retiro de V1) y 8 (sidebar), porque cada una superaba el presupuesto de tests y de archivos de una sola sesión. `writeCells` se adelanta al paso 3 (como en la tarea 3) y `createLegacyFixture` se mueve al paso 2, donde se usa por primera vez.
+
+### Step 1: Encabezados V2, clasificación por `Resultado` y clave de fila
+
+- **Files**: modificar `tests/sheet.test.js`, `tests/manifest.test.js`, `tests/fixtures/campaign.js`, `src/Config.js`, `src/Sheet.js`, `src/Preflight.js` (una línea), `src/Send.js` (adaptación mínima de la ruta V1); renombres mecánicos en `tests/preflight.test.js`, `tests/send.test.js`, `tests/test-send.test.js` y `tests/ui.test.js`.
+- **Do**:
+  1. Tests primero (ver **Test**). En `tests/preflight.test.js`, `tests/send.test.js`, `tests/test-send.test.js` y `tests/ui.test.js` solo renombres mecánicos: `'Mail Merge Status'` → `'Resultado'` en `setCell` / `getCell` / `buildRow`, motivos esperados `estado: X` → `resultado: X`, y los índices fijos de la columna de estado (`write.column === 4` en `send.test.js`, `row[4]` en `test-send.test.js`) → el índice de `Resultado` en el fixture V2 (6). Ningún otro cambio en esos archivos.
+  2. `tests/fixtures/campaign.js`: `HEADER_ROW` = `Email Address`, `First Name`, `Reference`, `File Attachments`, `Fecha`, `Campaña`, `Resultado`, `Detalle` (en ese orden); las filas quedan con `''` en las cuatro columnas gestionadas; el resto del fixture no cambia (`config` sigue sin `campaignName` hasta el paso 4; `createLegacyFixture` llega en el paso 2).
+  3. `src/Config.js` según "Contratos > Config.js": `HEADERS` V2 (sin `STATUS` ni `SCHEDULED`), `MANAGED_HEADERS`, `LEGACY_HEADERS`, los `LIMITS` nuevos (`CONFIRM_TTL_MS`, `PROGRESS_TTL_MS`, `MAX_CONFIRM_ROWS`, `MAX_CACHE_VALUE_BYTES`, `MAX_DETAIL_CHARS`, `MAX_CAMPAIGN_NAME_CHARS`) con comentarios en español que expliquen cada margen, `PROPERTY_KEYS.CAMPAIGN_NAME` y `CACHE_PREFIX`. Transitorio: `LOG_SHEET_NAME` y `LOG_HEADERS` se conservan sin cambios (los usan `Ui.js` y `Services.js` hasta el paso 7). Actualizar el comentario de cabecera (D-31: los encabezados V2 son literales de compatibilidad).
+  4. `src/Sheet.js` según "Detalle del código > Sheet.js": `normalizeHeader_` aplica `normalize('NFC')` antes de recortar, colapsar espacios y pasar a minúsculas; `mapHeaders_` devuelve `{ ok, columns: { email, attachments, date, campaign, result, detail }, byName, errors, legacy: { status, scheduled } }` (índices 0-based o `MISSING_COLUMN`), exige `Email Address` y las cuatro gestionadas, `File Attachments` opcional, error exacto `La pestaña tiene encabezados de la versión anterior; usá "Preparar columnas"` si aparece `Mail Merge Status` o `Scheduled Date` (con su índice en `legacy`), y duplicados normalizados y ambigüedad sobre los ocho nombres conocidos (seis de `HEADERS` y dos de `LEGACY_HEADERS`); `classifyRows_` con motivos `oculta por el usuario`, `oculta por un filtro`, `resultado: <valor>` (sobre `columns.result`) y sin el criterio de `Scheduled Date`; `rowKey_(values, columns)` = `JSON.stringify` de una copia con `columns.date`, `columns.campaign` y `columns.detail` en `''` cuando existen, sin mutar la entrada (D-36). Actualizar los comentarios de las funciones.
+  5. `src/Preflight.js`: solo `key: rowKey_(row.values, report.headers.columns)` en `buildPreflight_` (el resto de la validación V2 es del paso 3).
+  6. `src/Send.js` (ruta V1, transitorio): en `sendConfirmedRows_`, `statusColumn = report.headers.columns.result` y `rowKey_(…, report.headers.columns)` en las tres comparaciones (relectura, `after` y `expected`). Sin otros cambios ni refactors; `runTestSend_` no cambia.
+- **Test**:
+  - `tests/sheet.test.js` (AC-12): encabezados V2 completos → `ok: true` con los seis índices correctos y `legacy` en `-1`; sin `Email Address` y sin cada columna gestionada (al menos `Resultado`) → error que nombra la columna faltante; duplicado exacto y normalizado (`First Name` / `first  name`) → error; `resultado` en minúsculas y `Email  Address` → ambiguo; `Campa` + `n` + U+0303 (la `ñ` descompuesta) → reportado como ambiguo con `Campaña`, no como columna desconocida; espacios alrededor y celdas vacías → `ok: true`; sin `File Attachments` → `attachments: -1`; con `Mail Merge Status` o `Scheduled Date` → `ok: false`, el error exacto de encabezados heredados y el índice en `legacy`.
+  - AC-10: `Resultado` = `SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR` y `2026-01-01` → excluidas con `resultado: <valor>`; `Resultado` vacío → elegible, aunque `Fecha` tenga valor (D-31: solo `Resultado` decide).
+  - AC-11: filas ocultas por el usuario o por un filtro → excluidas con su motivo aun con `Resultado` vacío. Fila totalmente vacía → `blankRows` y la primera fila de datos es la 2.
+  - AC-50 / D-36: `rowKey_` no cambia si cambian `Fecha`, `Campaña` o `Detalle`; cambia si cambia `Resultado` u otra columna; no muta el arreglo recibido.
+  - Retiros y reescrituras de "Tests V1 que se retiran o se invierten" para `tests/sheet.test.js`: los dos "D-03 (AC-31)" se retiran; "rechaza la falta de Mail Merge Status" y "sin Scheduled Date ni File Attachments…" se reescriben sobre `Resultado` y las gestionadas; "D-14: rowKey_…" pasa a D-36 / AC-50.
+  - `tests/manifest.test.js`: "D-01 (AC-28)" pasa a "D-31 (AC-28)": `HEADERS.EMAIL`, `HEADERS.DATE === 'Fecha'`, `HEADERS.CAMPAIGN === 'Campaña'`, `HEADERS.RESULT === 'Resultado'`, `HEADERS.DETAIL === 'Detalle'`, `LEGACY_HEADERS.STATUS === 'Mail Merge Status'`, `LEGACY_HEADERS.SCHEDULED === 'Scheduled Date'`, y los estados y `TEST_SUBJECT_PREFIX` sin cambios.
+  - Regresión: los tests de `preflight`, `send`, `test-send` y `ui` pasan solo con los renombres mecánicos.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Config.js`, `src/Sheet.js`, `src/Preflight.js`, `src/Send.js`, `tests/fixtures/campaign.js` y cada test modificado; `git diff --check` sin salida. Commit sugerido: `feat(sheet): adoptar las columnas gestionadas Fecha, Campaña, Resultado y Detalle`.
+
+### Step 2: Plan de columnas y migración ("Preparar columnas")
+
+- **Files**: crear `tests/setup.test.js`, `src/Setup.js`; modificar `tests/fixtures/campaign.js` (`createLegacyFixture`), `tests/helpers/fakes.js` (`writeHeaderCells`), `tests/services.test.js`, `src/Sheet.js` (`planColumnSetup_`), `src/Services.js` (`writeHeaderCells`).
+- **Do**:
+  1. `tests/fixtures/campaign.js`: `createLegacyFixture()` (exportada) = el mismo fixture con los encabezados V1 `Email Address`, `First Name`, `Reference`, `File Attachments`, `Mail Merge Status`, `Scheduled Date` y una fila adicional con `Mail Merge Status = Email Sent` y `Scheduled Date` con valor (no bloquea: tiene estado). `buildLegacyRow` u otro helper equivalente si hace falta armar filas V1.
+  2. `tests/helpers/fakes.js`: `writeHeaderCells(sheetId, cells)` aplica cada celda en orden sobre `values[0]`; si `column` supera el ancho actual, extiende todas las filas con `''` (simula `insertColumnsAfter`); registra cada celda en `calls.headerWrites` (`{ sheetId, column, value }`) y en `calls.sequence` (`{ type: 'writeHeaderCells', column, value }`). `failOn.writeHeaderCells = { afterCells: N }` lanza después de escribir las primeras N celdas (N = 0: antes de escribir) para simular una migración parcial.
+  3. Tests primero (ver **Test**).
+  4. `src/Sheet.js`: `planColumnSetup_(sheetData)` → `ColumnSetupPlan = { needed, headerKey, renames: [{ column, from, to }], appends: [{ column, name }], errors[], blockedRows[] }`, sin efectos, según "Detalle del código > Sheet.js", D-33 y D-34: `headerKey = JSON.stringify(values[0])`; `needed: false` (sin renombres, agregados ni errores) si `mapHeaders_(values[0]).ok`; renombres en el orden `Mail Merge Status` → `Resultado` y luego `Scheduled Date` → `Fecha`; agregados de las gestionadas que falten, en el orden de `MANAGED_HEADERS` (`Resultado` primero), desde `width = max(longitud de las filas de values)`; bloqueos (a) a (e) de D-34 con mensajes en español, evaluados solo si `needed`: (c) sobre la columna de estado vigente (`Mail Merge Status`, o `Resultado` si ese renombre ya se aplicó); (d) sin heredadas ni `Resultado` y con alguna de `Fecha`, `Campaña` o `Detalle`; (e) sin heredadas, con `Resultado` y con valor en alguna de las presentes entre `Fecha`, `Campaña` y `Detalle` en una fila con `Resultado` vacío, nombrando la columna; (c) y (e) incluyen las filas ocultas, llenan `blockedRows` (ascendente, sin duplicados) y el error lista hasta 20 filas y `y N filas más`. Si la fila de encabezados tiene duplicados o ambigüedades, el plan las devuelve en `errors` y no propone escrituras (falla cerrado). D-34 (e) está `PROPUESTA`: implementarla solo si el usuario la confirmó (ver "Decisiones" en las convenciones).
+  5. `src/Setup.js`: `applyColumnSetup_(deps, expectedHeaderKey)` → `{ ok, errors, applied: { renames, appends } }` según "Detalle del código > Setup.js": configuración incompleta (`isCompleteConfig_`) → error sin lock ni escrituras; `tryLock(LIMITS.LOCK_WAIT_MS)` o `Hay otra ejecución en curso; reintentá en unos minutos`; dentro de `try/finally` con `release()`: `readSheet`, `planColumnSetup_`, `headerKey` distinto → `La fila de encabezados cambió; volvé a validar`, errores del plan → devueltos sin escribir, `needed: false` → `ok` sin escribir; una sola llamada `writeHeaderCells(sheetId, [...renames, ...appends])` con `{ column, value }`; si lanza → `No se pudieron preparar todas las columnas; revisá la fila 1 y volvé a intentar (la operación se puede repetir)`.
+  6. `src/Services.js`: `sheets.writeHeaderCells` según "Detalle del código > Services.js" (`getMaxColumns`, `insertColumnsAfter(maxColumns, faltantes)` una vez si hace falta, `getRange(1, column + 1).setValue(value)` por celda, un `SpreadsheetApp.flush()` final).
+- **Test**:
+  - `tests/setup.test.js` (con `createLegacyFixture` y el `headerKey` de `planColumnSetup_`):
+    - AC-42 / D-33: hoja V1 → encabezados `…, File Attachments, Resultado, Fecha, Campaña, Detalle`, todas las celdas de datos idénticas antes y después, y `mapHeaders_` V2 `ok` sobre el resultado; con una celda de datos sin encabezado a la derecha de la última columna, las nuevas columnas empiezan después de ella.
+    - AC-43 / D-34, cero `headerWrites`: (a) `Mail Merge Status` + `Resultado` y `Scheduled Date` + `Fecha`; (b) hoja V1 con `Campaña` preexistente; (c) fila con `Scheduled Date` y estado vacío (también una oculta) con la lista de filas, y más de 20 filas así → `y N filas más`; (d) sin heredadas ni `Resultado`, con `Fecha` propia vacía, con `Fecha` propia con datos y con `Detalle` propia; (e) sin heredadas, con `Resultado`, sin `Campaña` y con `Fecha` propia con valor en una fila visible y en una oculta con `Resultado` vacío → error que nombra `Fecha` y lista ambas filas, `blockedRows` igual; `expectedHeaderKey` distinto; lock no disponible.
+    - AC-43 / D-34 (e), lo seguro no se bloquea: sin heredadas, con `Resultado` y `Detalle` propia con valores solo en filas con `Resultado` no vacío → `ok`, se agregan `Fecha` y `Campaña` y las celdas de `Detalle` quedan idénticas.
+    - AC-44: segunda ejecución sin cambios y `ok`; `headerWrites` escribe `Resultado` antes que `Fecha`; `failOn.writeHeaderCells = { afterCells: 1 }` → el mensaje que invita a repetir, y una segunda ejecución (falso nuevo sobre el mismo fixture) completa lo que falta desde `Resultado` + `Scheduled Date` sin caer en D-34; en ese estado parcial, una fila con `Scheduled Date` y `Resultado` vacío bloquea (regla (c) sobre `Resultado`); desde `Resultado` + `Fecha` renombrada (con valores solo en filas con estado) la reanudación no cae en (e); hoja solo con `Email Address` y variables → agrega `Resultado`, `Fecha`, `Campaña` y `Detalle` en ese orden, y con `failOn.writeHeaderCells = { afterCells: 1 }` queda solo `Resultado` y la reanudación agrega las otras tres sin caer en (d).
+    - AC-53: `tryLock` con `LOCK_WAIT_MS` y un solo `release`, también cuando `writeHeaderCells` lanza; lock no disponible → cero `headerWrites` y el mensaje de otra ejecución en curso; configuración incompleta → error sin llamadas al lock.
+  - `tests/services.test.js`: `writeHeaderCells` con `getMaxColumns() = 6` y celdas en las columnas 6 y 7 → `insertColumnsAfter(6, 2)` una vez, `setValue` en `getRange(1, 7)` y `getRange(1, 8)` y un solo `flush`; sin inserción si alcanzan las columnas (extender `fakeSheet` con `getMaxColumns` e `insertColumnsAfter`).
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Sheet.js`, `src/Setup.js`, `src/Services.js`, `tests/fixtures/campaign.js`, `tests/helpers/fakes.js`, `tests/setup.test.js`, `tests/services.test.js`; `git diff --check` sin salida. Commit sugerido: `feat(setup): agregar "Preparar columnas" con migración de encabezados V1`.
+
+### Step 3: Validación V2, vistas estructuradas y adaptador `writeCells`
+
+- **Files**: modificar `tests/preflight.test.js`, `tests/services.test.js`, `tests/helpers/fakes.js` (`writeCells`), `src/Preflight.js`, `src/Services.js` (`writeCells`).
+- **Do**:
+  1. `tests/helpers/fakes.js`: `writeCells(sheetId, rowNumber, cells)` escribe las celdas en orden sobre `values` (extendiendo filas como `writeStatus`), registra `calls.cellWrites` (`{ sheetId, rowNumber, cells }` con copias) y `calls.sequence` (`{ type: 'writeCells', rowNumber, cells }`). `failOn.writeCells = { value, rowNumber, afterWrite }` aplica cuando alguna celda de la llamada tiene ese `value` (`undefined` = cualquiera) y la fila coincide: sin `afterWrite` lanza antes de escribir (`writeCells-failed` en `sequence`); con `afterWrite` escribe todo y luego lanza. `writeStatus` y `appendLog` se conservan (ruta V1 hasta el paso 7).
+  2. Tests primero (ver **Test**).
+  3. `src/Preflight.js`, `buildPreflight_` según "Detalle del código > Preflight.js": `report.setup` (por defecto `null`) = `planColumnSetup_(sheet)` cuando el plan tiene `needed: true`; `validateTemplate_` agrega `La columna "X" la escribe Mail Merge y no se puede usar como marcador` por cada marcador que sea una columna gestionada, en asunto, texto plano y HTML (D-35); el error de configuración incompleta deja de mencionar `Configurar campaña…` y remite a la sección `Campaña` del panel. `templateKey` no cambia (sigue incluyendo `headers`).
+  4. `buildRowReview_(report, limit = LIMITS.MAX_CONFIRM_ROWS)` → `{ commonAttachments, rows: [{ rowNumber, email, attachmentNames }], more }` (orden ascendente, nombres saneados con `sanitizeHeaderValue_`, nunca URLs ni IDs), `findOverwriteRows_(rows, columns)` (D-47) y `buildValidationView_(report)` → `ValidationView` con exactamente los campos de "Contratos > Vistas", incluido `overwriteRows = findOverwriteRows_(report.valid, report.headers.columns)` (`[]` con errores globales) (`excludedByReason` en orden de primera aparición; `invalidRows` hasta `MAX_CONFIRM_ROWS` y `moreInvalid`; `quotaRemaining` `null` si no está disponible), todo JSON plano y texto saneado (D-42, D-44).
+  5. Transitorio: `formatRowReview_` y `formatPreflightReport_` quedan sin cambios (los usa `Ui.js` V1 hasta el paso 7).
+  6. `src/Services.js`: `sheets.writeCells` según "Detalle del código > Services.js" y renombre de `asLogCell_` a `asSheetValue_` (actualizar su uso en `appendLog`). `writeStatus` se conserva hasta el paso 7.
+- **Test**:
+  - `tests/preflight.test.js`:
+    - AC-27 (núcleo): `buildPreflight_` → cero `send`, `cellWrites` y `headerWrites` (reemplaza las aserciones sobre `statusWrites` / `logEntries`).
+    - AC-45 / D-35: fixture V1 (`createLegacyFixture`) → error global de encabezados heredados y `report.setup` con `needed: true`, renombres y agregados; fixture V2 → `setup: null`; `{{Resultado}}` en el asunto o `{{Fecha}}` en el cuerpo → error global exacto y `valid` vacío.
+    - R-02: configuración incompleta → el mensaje menciona la sección `Campaña` y no `Configurar campaña…`.
+    - AC-33 / D-42: `buildValidationView_` con 25 filas válidas lista las 25 (sin corte en 20) con destinatario y nombres de adjuntos en el orden de la celda, más los adjuntos comunes; ningún texto contiene `drive.google.com`, `docs.google.com` ni IDs de Drive; un nombre con salto de línea queda en una línea; `invalidRows` con motivos; `counts` y `excludedByReason` (por ejemplo `resultado: SKIP` con 1); `plain(view)` igual a `JSON.parse(JSON.stringify(view))`.
+    - D-41 / D-42: con `MAX_CONFIRM_ROWS = 2` (contexto propio) → dos filas y `moreRows` con el resto; lo mismo para `invalidRows` / `moreInvalid`.
+    - AC-54 / D-47 (validación): con `setCell(3, 'Detalle', 'x')` y `setCell(4, 'Fecha', '2026-01-01')` en filas válidas → `overwriteRows = [3, 4]`; la vista no contiene `'x'` ni `2026-01-01` fuera de los números de fila; sin valores → `[]`; una fila con `Resultado` no vacío y `Detalle` con valor no aparece (no es válida).
+    - Se retiran "D-23: formatRowReview_…" (dos tests) y "formatPreflightReport_…" (dos tests), reemplazados por los anteriores.
+  - `tests/services.test.js` (AC-41 / D-38): `writeCells` hace `getRange(rowNumber, column + 1).setValue` por celda en el orden dado; `=X`, `+X`, `-X` y `@X` se escriben con `'` inicial; las `Date` y los números pasan sin cambios; un solo `flush` después de todas las celdas. El test "R-12: writeStatus…" sigue hasta el paso 7.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Preflight.js`, `src/Services.js`, `tests/helpers/fakes.js`, `tests/preflight.test.js`, `tests/services.test.js`; `git diff --check` sin salida. Commit sugerido: `feat(preflight): validación V2 con plan de columnas y vistas para el panel`.
+
+### Step 4: Confirmación por token de un solo uso y registro de progreso
+
+- **Files**: crear `tests/confirmation.test.js`, `src/Confirmation.js`; modificar `tests/fixtures/campaign.js`, `tests/helpers/fakes.js`, `tests/services.test.js`, `src/Services.js`.
+- **Do**:
+  1. `tests/fixtures/campaign.js`: `config` con `campaignName: ''` (también en `createLegacyFixture`).
+  2. `tests/helpers/fakes.js`: `props.getConfig()` devuelve `{ campaignName: '', ...fixture.config }` (una configuración V1 sin la clave sigue funcionando); `cache` en memoria guardada en el fixture (`fixture.cache`, creada por el falso si falta), para que dos falsos sobre el mismo fixture la compartan como comparten la hoja: `get(key)` → texto o `null`, `put(key, value, ttlSeconds)`, `remove(key)`; registros `calls.cacheGets`, `calls.cachePuts` (`{ key, value, ttlSeconds }`) y `calls.cacheRemoves`, y `calls.sequence` con `{ type: 'cachePut', key }` y `{ type: 'cacheRemove', key }`; `failOn.cachePut` y `failOn.cacheRemove` (regla `true` o función de la clave); helpers `evict(key)` (desalojo) y `setCacheValue(key, value)` (contenido corrupto o alterado). `crypto.sha256Hex` con `node:crypto` (`createHash('sha256').update(text, 'utf8').digest('hex')`). `ids.newToken()` devuelve UUID válidos y deterministas (`options.tokens` o `00000000-0000-4000-8000-00000000000N`).
+  3. Tests primero (ver **Test**).
+  4. `src/Services.js`: `cache` sobre `CacheService.getUserCache()` resuelto al usarse; `crypto.sha256Hex` con `Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)` y conversión `(b & 0xff)` a dos dígitos hex en minúsculas; `ids.newToken` = `Utilities.getUuid()`; `props.getConfig` devuelve `campaignName` (`''` si falta `MM_CAMPAIGN_NAME`) y `props.setConfig` guarda las cinco claves.
+  5. `src/Confirmation.js` según "Detalle del código > Confirmation.js", "Snapshot de confirmación", "Registro de progreso" y `ConfirmationView` de "Contratos > Vistas": `isValidToken_`, `prepareConfirmation_(deps, kind, rowNumber)` (D-26, D-27, D-39, D-41; textos de `warning` exactos; `expiresAtIso = new Date(expiresAt).toISOString()`; en `test`, `rowNumber` entero o texto `/^\d+$/` tras recortar, ≥ 2, y motivo exacto si no está en `report.valid`, releyendo la pestaña como `runTestSend_` V1 para distinguir fila vacía o fuera de rango; `kind` desconocido → `ok: false`; nunca escribe la hoja ni toca la caché al rechazar), `takeConfirmation_(deps, token, kind)` (orden de rechazos, borrado de toda entrada existente, consumo y `cache.remove` que lanza → `ok: false`; D-28), `cancelConfirmation_(deps, token)` (sin lock; token con formato inválido no toca la caché), `publishProgress_(deps, token, progress)` (nunca lanza; filas `{ rowNumber, result, detail }` sin `recipient` y direcciones de correo de `detail` y `stoppedReason` reemplazadas por `[dirección]` (D-46); recorte de `detail` a `MAX_DETAIL_CHARS` y de filas hasta entrar en `MAX_CACHE_VALUE_BYTES`, medido con `utf8ByteLength_`, con `rowsTruncated: true`); `ConfirmationView.overwriteRows` con `findOverwriteRows_` sobre las filas confirmadas (D-47) y `readProgress_(deps, token)` → `{ found, progress }`.
+- **Test**:
+  - `tests/confirmation.test.js`:
+    - AC-34 / D-26 / D-27: `prepareConfirmation_(deps, 'send')` → `ok`, token con formato UUID, un solo `cachePut` en `MM_CONF_<token>` con TTL 600; el snapshot tiene `v: 2`, `kind: 'send'`, `userEmail`, `expiresAt = createdAt + 600000`, `config` igual a `props.getConfig()`, `templateDigest = sha256(report.templateKey)`, `rows` `[[2, h2], [3, h3], [4, h4]]` con `h = sha256(rowKey_)` y `testTo: ''`; las claves del snapshot son exactamente las del contrato; el JSON no contiene `alpha@example.test`, `beta@example.test`, `gamma@example.test`, `REF-001`, `Alpha` ni URLs (sí `operator@example.test` en `userEmail` y `from`, como documenta D-27); la vista trae campaña, `overwriteRows: []`, `count: 3`, todas las filas con adjuntos, adjuntos comunes, la advertencia exacta y `expiresAtIso`; cero `send`, `cellWrites`, `headerWrites` y llamadas al lock.
+    - Sin filas válidas → `No hay correos para enviar` sin `cachePut`; con errores globales → `ok: false` sin `cachePut`.
+    - AC-46 / D-39 (lado de la preparación): nombre vacío → `newCampaignId` en `view.campaign` y `snapshot.campaign`; dos preparaciones sin nombre → IDs distintos; con nombre → se usa el nombre.
+    - AC-48: prueba rechazada sin `cachePut` para fila oculta, `Resultado` no vacío, fila inválida (adjunto faltante), fila 1, fuera de rango, fila vacía, `'abc'`, `2.5`, `-3` y `null`; `'2'` se acepta igual que `2` (snapshot `kind: 'test'` con una sola fila y `testTo = operator@example.test`; vista con `to` y la advertencia de prueba exacta).
+    - AC-49 / D-41: `MAX_CONFIRM_ROWS = 2` con tres filas válidas → `ok: false` con el mensaje de tandas y sin `cachePut`; `MAX_CACHE_VALUE_BYTES` reducido → `ok: false` sin `cachePut`; `cache.put` que lanza → `No se pudo guardar la confirmación; no se enviará nada`.
+    - AC-35 (unidad, `takeConfirmation_`): `undefined` y `'abc'` → rechazo sin `cacheGets`; UUID desconocido → `La confirmación venció o no es válida; volvé a revisar`; JSON truncado, `v: 1`, `rows` vacío o desordenado, `test` con dos filas o `testTo` vacío, `kind` distinto, `userEmail` distinto (falso con otra cuenta sobre el mismo fixture) y vencido (`setNow` > `expiresAt`, `La confirmación venció; volvé a revisar y confirmar`) → rechazo y entrada borrada.
+    - AC-36 / D-28 (unidad): toma válida → `ok`, snapshot devuelto y entrada borrada; segunda toma del mismo token → rechazo; `cache.remove` que lanza → `ok: false`.
+    - `cancelConfirmation_`: borra una entrada existente; token desconocido o ya consumido → `{ ok: true }`; formato inválido → sin acceso a la caché.
+    - AC-54 / D-47 (confirmación): con `setCell(3, 'Campaña', 'Anterior')` → `view.overwriteRows = [3]` en `send` y en `test` sobre la fila 3, `[]` en `test` sobre la fila 2; el snapshot y la vista no contienen `Anterior`.
+    - AC-38 / D-29 / D-46 (unidad): `publishProgress_` publica en `MM_PROG_<token>` con TTL 1800; un `put` que lanza no se propaga; las filas publicadas no tienen la clave `recipient` aunque la entrada la traiga; `detail` `Gmail lanzó una excepción (Invalid email: beta@example.test)` y `stoppedReason` con una dirección se publican con `[dirección]` y sin `@example.test`; `detail` recortado a `MAX_DETAIL_CHARS`; con `MAX_CACHE_VALUE_BYTES` reducido y detalles largos, el valor publicado entra en el límite (bytes UTF-8), conserva los contadores completos y las últimas filas, con `rowsTruncated: true`; `readProgress_` → `found: false` antes de publicar, el registro después, y `found: false` sin acceso a la caché con un token inválido.
+  - `tests/services.test.js`: `cache` usa `CacheService.getUserCache` recién al usarse y delega `get` / `put` / `remove`; `crypto.sha256Hex('abc')` = `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` con un `computeDigest` falso que devuelve bytes con signo; `ids.newToken` usa `Utilities.getUuid`; `props.getConfig` sin `MM_CAMPAIGN_NAME` → `campaignName: ''`; "D-08: props.setConfig guarda las cuatro claves…" pasa a cinco claves con `MM_CAMPAIGN_NAME`.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Confirmation.js`, `src/Services.js`, `tests/fixtures/campaign.js`, `tests/helpers/fakes.js`, `tests/confirmation.test.js`, `tests/services.test.js`; `git diff --check` sin salida. Commit sugerido: `feat(confirmation): confirmación por token de un solo uso y registro de progreso en caché`.
+
+### Step 5: Motor de envío V2 (confirmaciones de tipo `send`)
+
+- **Files**: modificar `tests/send.test.js`, `src/Send.js`, `src/Config.js` (comentario de `MAX_RUNTIME_MS`), `tests/helpers/fakes.js` (solo si falta algún registro o gancho).
+- **Do**:
+  1. Tests primero: en `tests/send.test.js`, el helper `runSend(ctx, fake, between)` pasa a `prepareConfirmation_(fake.deps, 'send')` → `between()` opcional → `executeConfirmed_(fake.deps, token, 'send')`, y `status(fake, row)` lee `Resultado`. Cada test V1 se porta conservando su ID e intención (lista en **Test**), con aserciones sobre el resultado V2 (`counts`, `rows[].result`), `calls.cellWrites` y `calls.sequence`.
+  2. `src/Send.js`: `executeConfirmed_(deps, token, kind)` según "Detalle del código > Send.js", pasos 1 a 4 y 6 (la publicación de progreso de los pasos 5 y 7 llega en el paso 6), con D-30, D-15, D-43, D-37 y D-38. En este paso solo `kind === 'send'`: cualquier otro `kind` devuelve `ok: false` sin lock ni caché (guarda transitoria que el paso 6 reemplaza por la rama de prueba). El resultado se acumula con la forma interna de "Registro de progreso" (`state`, `kind`, `campaign`, `counts`, `rows: [{ rowNumber, recipient, result, detail }]`, `stoppedReason`), con `recipient` para `SendResultView`; en el paso 6 `publishProgress_` quita `recipient` y redacta antes de publicar (D-46). Escrituras con los índices de `report.headers.columns`: claim `[Fecha = new Date(clock.now()), Campaña = snapshot.campaign, Detalle = texto de claim de D-37, Resultado = ENVIANDO]`; éxito `[Detalle = SEND_TEXT_.ACCEPTED, Resultado = Email Sent]`; excepción de Gmail `[Detalle = motivo resumido con summarizeError_ (≤ MAX_DETAIL_CHARS, sin URLs), Resultado = REVISAR]`; fila omitida, claim fallido o fila desplazada → ninguna escritura. Verificación posterior al envío: `rowKey_(relectura, columns)` contra `rowKey_(valores confirmados con Resultado = ENVIANDO, columns)`. Lock no disponible → snapshot sin consumir (D-45). Se conservan `SEND_TEXT_`, `summarizeError_`, los cortes por tiempo y cuota y `QUOTA_UNKNOWN`.
+  3. `buildSendResultView_(result)` → `SendResultView = { ok, kind, campaign, counts, rows, stoppedReason, summaryLines[] }` con todas las filas, líneas en español (D-13: "aceptados por Gmail", nunca "entregados"), texto saneado y JSON plano.
+  4. `src/Config.js`: el comentario de `MAX_RUNTIME_MS` pasa a D-30 (se mide desde el inicio de `execute…`).
+  5. Transitorio: `prepareSend_`, `executeSend_`, `sendConfirmedRows_`, `runTestSend_`, `appendLogSafe_` y `formatSendSummary_` no se tocan (los usa `Ui.js` V1 hasta el paso 7); el código V2 no los llama ni usa `writeStatus` / `appendLog`.
+- **Test** (`tests/send.test.js`):
+  - Camino feliz: `sequence` = `cacheRemove(MM_CONF_<token>)` y luego, por fila, `writeCells` del claim (con `ENVIANDO`) → `send` → `writeCells` del éxito; `tryLock(10000)` y un solo `release`; filas 2, 3 y 4 en `Email Sent`; mensajes de `buildMessage_` (asunto y adjuntos); `counts = { total: 3, processed: 3, sent: 3, skipped: 0, review: 0, pending: 0 }`; `buildSendResultView_` dice `3 correos aceptados por Gmail` y no contiene `entregad`.
+  - AC-40 / D-37: celdas del claim en orden y columnas exactas (`Fecha` con `isDate`, `Campaña`, `Detalle` de claim, `Resultado = ENVIANDO`); éxito `Detalle` y luego `Email Sent`; excepción de Gmail `Detalle` y luego `REVISAR`; fila omitida y claim fallido sin `cellWrites` de esa fila.
+  - Portados de la V1: AC-11, AC-07 / AC-13, AC-09 (PDF exportado que supera el límite en la Fase B), AC-19 (dos, con `failOn.writeCells` de `ENVIANDO` con y sin `afterWrite`), AC-20 (`failOn.writeCells` de `Email Sent`: un envío, fila en `ENVIANDO`, sin reenvío al re-ejecutar), AC-21, AC-22 (cuota 1, cuota 0, cuota desconocida), AC-23 (tres), AC-24, AC-25, D-15 (plantilla cambiada y errores globales), Fase B paso 8 (fila insertada arriba: sin `Email Sent` en otra fila, revisión y detención).
+  - AC-18: lock no disponible → cero envíos y escrituras, y `MM_CONF_<token>` sigue en la caché (un `execute` posterior con el lock disponible envía); dos ejecuciones secuenciales con tokens distintos → un solo envío por fila.
+  - AC-35 (integración): `executeConfirmed_` con `undefined`, `'abc'`, UUID desconocido, snapshot vencido, entrada desalojada (`evict`), token de una prueba ejecutado como `send`, otra cuenta (falso con otro `userEmail` sobre el mismo fixture), JSON truncado y `v: 1` → cero envíos y cero `cellWrites`, con su mensaje.
+  - AC-36 / D-28: el mismo token dos veces → la segunda no envía; en `sequence` el `cacheRemove` precede al primer `writeCells`; `cache.remove` que lanza → cero envíos y escrituras.
+  - AC-37 / D-43: cambio de `from` (al alias), `replyTo`, `draftId` (otro borrador agregado al fixture), `sheetId` o `campaignName` entre `prepare…` y `execute…` → cancelación total sin envíos ni escrituras.
+  - AC-39: `rows[].result` ∈ `Email Sent`, `OMITIDA`, `NO ENVIADA`, `ENVIANDO`, `REVISAR`; ni `rows`, ni `summaryLines`, ni las celdas `Detalle` contienen el cuerpo, el asunto renderizado (`Notice REF-001`), `drive.google.com` ni valores de `First Name` / `Reference`.
+  - D-30: preparar en t0 y ejecutar en t0 + 5 min (dentro del vencimiento) envía; con un reloj que avanza en cada llamada (`now` como función) el corte por tiempo deja las filas restantes vacías y elegibles (reemplaza el AC-22 de reloj fijo).
+  - Retiros de "Tests V1 que se retiran o se invierten": "prepareSend_ (Fase A)…" (dos, cubiertos por AC-34 en el paso 4), "AC-26: las entradas de registro…" (→ AC-39 / AC-41) y "D-18: una falla del registro…"; "D-13: formatSendSummary_…" se reescribe sobre `buildSendResultView_`.
+  - La mayoría de estos tests son portes mecánicos de los existentes; el volumen se justifica porque todos ejercitan la misma función.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Send.js`, `src/Config.js`, `tests/send.test.js` y `tests/helpers/fakes.js` si cambió; `git diff --check` sin salida. Commit sugerido: `feat(send): motor de envío V2 con confirmación por token y columnas gestionadas`.
+
+### Step 6: Publicación de progreso y prueba con el motor V2
+
+- **Files**: modificar `tests/send.test.js`, `tests/test-send.test.js`, `src/Send.js`.
+- **Do**:
+  1. Tests primero (ver **Test**).
+  2. `executeConfirmed_`: `publishProgress_` inicial (`EN_CURSO`, `total = snapshot.rows.length`) después de las verificaciones globales del paso 4 de la Fase B, una publicación después de cada fila (incluidas las omitidas y la que detiene la ejecución) y una final `TERMINADO` (también ante corte por tiempo, cuota o revisión), según D-29 y los pasos 5 y 7 de "Detalle del código > Send.js". Un rechazo anterior (token, lock, toma, configuración o plantilla) no publica. `SendResultView` sigue trayendo todas las filas aunque la copia publicada se recorte.
+  3. Reemplazar la guarda transitoria del paso 5 por la rama `test` (D-40): `session.userEmail() === snapshot.testTo` o cancelación total; después de `buildMessage_`, `to = snapshot.testTo` y `subject = TEST_SUBJECT_PREFIX + subject`; `Detalle` de éxito exacto de D-40 con la cuenta saneada; excepción de Gmail → `REVISAR` como en el envío real; `recipient` de la fila = `testTo`. Mismo lock, claim, verificación y escrituras.
+  4. Transitorio: `runTestSend_` y `appendLogSafe_` siguen (los usa `Ui.js` V1 hasta el paso 7).
+- **Test**:
+  - `tests/send.test.js` (AC-38 / D-29): con tres filas, cinco `cachePut` en `MM_PROG_<token>` (inicial, una por fila, final); `processed` crece de a uno; el último registro es `TERMINADO` y sus `counts` y `rows` coinciden con la vista devuelta; `readProgress_` lo lee; con `failOn.cachePut` para las claves `MM_PROG_` → mismos envíos, `cellWrites` y resultado que sin falla; con detalles largos y `MAX_CACHE_VALUE_BYTES` reducido (contexto propio) cada valor publicado entra en el límite, con `rowsTruncated: true` y contadores completos, y la vista devuelta tiene todas las filas; ejecución detenida por Gmail → registro final `TERMINADO` con `stoppedReason`. D-46: ningún valor de `calls.cachePuts` con clave `MM_PROG_` contiene `@example.test` ni la clave `recipient` (envío feliz, `failOn.send` con un mensaje que cita `beta@example.test`, y la prueba cuyo `Detalle` nombra la cuenta), mientras que `SendResultView.rows[].recipient` sí trae las direcciones.
+  - `tests/test-send.test.js`:
+    - AC-15: `prepareConfirmation_(deps, 'test', 2)` + `executeConfirmed_(deps, token, 'test')` → un solo `send` a `operator@example.test`, igual a `buildMessage_` de la fila 2 salvo `to` y el prefijo `[PRUEBA] ` del asunto.
+    - AC-47 / D-40: después de la prueba, fila 2 con `Resultado = Email Sent`, `Detalle` de prueba exacto, `Campaña` y `Fecha`; una preparación `send` posterior la excluye (`count: 2`); después de `setCell(2, 'Resultado', '')`, la confirmación del envío real la incluye con `overwriteRows = [2]` (AC-54, D-47) y el envío la manda a `alpha@example.test` sin prefijo, reemplazando `Fecha`, `Campaña` y `Detalle` de la prueba.
+    - AC-16: fila con adjunto faltante → la preparación de la prueba falla, sin token ni envío; falla de Drive inyectada entre `prepare…` y `execute…` (`failOn.getFileInfo`) → sin envío y `Resultado` sin cambios.
+    - D-40 (invertido): Gmail lanza en la prueba → la fila queda `REVISAR` con `Detalle`, un solo intento y detención.
+    - D-22 y AC-14: cuenta vacía o errores globales al preparar → sin token ni envío; otra cuenta al ejecutar (falso con otro `userEmail` sobre el mismo fixture) → cero envíos.
+    - AC-35 (tipos cruzados): token de prueba ejecutado como `send` y token de envío ejecutado como `test` → rechazo sin envíos.
+    - Retiros de "Tests V1 que se retiran o se invierten": "D-07: runTestSend_ envía con una fila no elegible…" (invertido, cubierto por AC-48 en el paso 4), "D-07: runTestSend_ rechaza la fila 1…" (→ AC-48), los dos "D-18" y "Gmail que lanza en la prueba devuelve error sin escribir estado" (invertido arriba). Los tests de `buildMessage_` (AC-05 a AC-09) se conservan.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `src/Send.js`, `tests/send.test.js`, `tests/test-send.test.js`; `git diff --check` sin salida. Commit sugerido: `feat(send): publicar progreso por fila y enviar la prueba con el motor V2`.
+
+### Step 7: Funciones públicas del panel y retiro del flujo de diálogos V1
+
+- **Files**: modificar `tests/ui.test.js`, `tests/services.test.js`, `tests/manifest.test.js`, `tests/helpers/fakes.js`, `src/Ui.js`, `src/Send.js`, `src/Preflight.js`, `src/Services.js`, `src/Config.js`, `src/Sidebar.html` (una línea). Siete de estos archivos solo reciben eliminaciones o renombres de la ruta V1, por eso el paso supera el recuento habitual de archivos sin superar el presupuesto de contexto.
+- **Do**:
+  1. Tests primero: reescribir `tests/ui.test.js` (ver **Test**), reutilizando el arnés de `forbiddenService` para `onOpen` y reemplazando `createUi_` por globales falsos de `SpreadsheetApp` / `HtmlService` pasados a `loadAppsScript`.
+  2. `src/Ui.js` según "Contratos > Funciones públicas", D-25, D-39 y D-44: `onOpen` con un solo ítem `Abrir Mail Merge` → `menuOpenPanel`; `menuOpenPanel` → `SpreadsheetApp.getUi().showSidebar(HtmlService.createHtmlOutputFromFile('Sidebar').setTitle('Mail Merge'))`; envoltorios públicos de una línea `nombre(arg) { return nombre_(createServices_(), arg); }` para `getPanelState`, `saveConfig`, `validateCampaign`, `prepareTestSend`, `executeTestSend`, `prepareSendPending`, `executeSendPending`, `getSendProgress`, y `applyColumnSetup` / `cancelConfirmation` que llaman directo a `applyColumnSetup_` (Setup.js) y `cancelConfirmation_` (Confirmation.js) sin redefinirlos. `getPanelState_` (como `getConfigOptions` V1, excluye `LEGACY_LOG_SHEET_NAME`, `current` con `campaignName`); `saveConfig_` (validaciones V1 más el nombre de campaña: `sanitizeHeaderValue_`, recorte y error en español si supera `MAX_CAMPAIGN_NAME_CHARS`); `validateCampaign_` → `buildValidationView_(buildPreflight_(deps, deps.props.getConfig()))`; `prepareTestSend_` / `prepareSendPending_` → `prepareConfirmation_`; `executeTestSend_` / `executeSendPending_` → `executeConfirmed_` con su `kind`; `getSendProgress_` → `readProgress_`. Se eliminan `MENU_ITEMS_` de cinco ítems, los textos obsoletos de `UI_TEXT_`, `createUi_`, `runValidate_`, `runTestSendFromUi_`, `runSendPending_`, `menuConfigure`, `menuValidate`, `menuTestSend`, `menuSendPending`, `menuShowLog` y `getConfigOptions`.
+  3. Retiro del código V1 que queda sin llamadores: `src/Send.js` (`prepareSend_`, `executeSend_`, `sendConfirmedRows_`, `runTestSend_`, `appendLogSafe_`, `formatSendSummary_`, `TEST_LOG_RESULT_` y cualquier helper que quede sin uso); `src/Preflight.js` (`formatRowReview_`, `formatPreflightReport_`, `REPORT_ROW_LIMIT_` y `moreRowsLine_` si quedan sin uso); `src/Services.js` (`writeStatus`, `appendLog`, `showLogSheet` y sus comentarios); `src/Config.js` (`LOG_SHEET_NAME` → `LEGACY_LOG_SHEET_NAME`, se elimina `LOG_HEADERS`); `tests/helpers/fakes.js` (`writeStatus`, `appendLog`, `showLogSheet`, `statusWrites`, `logEntries`, `failOn.writeStatus`, `failOn.appendLog` y sus constantes). Confirmar con `grep` que `src/` y `tests/` no tienen referencias a esos nombres.
+  4. `src/Sidebar.html`: solo reemplazar la llamada `getConfigOptions()` por `getPanelState()` (misma forma de respuesta) para que el panel V1 siga cargando hasta el paso 8.
+- **Test**:
+  - `tests/ui.test.js`:
+    - AC-32: ningún `src/*.js` contiene `.alert(`, `.prompt(` ni `ButtonSet`; `src/Sidebar.html` no contiene `innerHTML` ni coincide con `/\b(alert|confirm|prompt)\s*\(/`; `onOpen` agrega exactamente `['Abrir Mail Merge', 'menuOpenPanel']` sin usar servicios de datos.
+    - `menuOpenPanel` llama a `createHtmlOutputFromFile('Sidebar')`, `setTitle('Mail Merge')` y una vez a `showSidebar`.
+    - AC-33: `validateCampaign_` → cero `send`, `cellWrites`, `headerWrites`, `cachePuts`, `cacheRemoves` y llamadas al lock; la vista lista todas las filas válidas.
+    - AC-46 / D-39: `saveConfig_` guarda `campaignName` saneado (sin CR/LF, recortado); 81 caracteres → lanza sin `setConfig`; vacío → `''`; `getPanelState_().current.campaignName` refleja lo guardado.
+    - AC-51 / D-32: `getPanelState_` no ofrece `Registro Mail Merge` y `saveConfig_` la rechaza; un flujo completo (`applyColumnSetup`, prueba y envío) deja los valores de esa pestaña idénticos a los iniciales.
+    - `saveConfig_` portado: `sheetId` numérico desde el texto del select, Reply-To vacío aceptado y los rechazos V1 (pestaña inválida o inexistente, borrador inexistente, remitente no autorizado, Reply-To inválido) sin `setConfig`.
+    - D-44: el resultado de cada `…_` público es igual a su ida y vuelta por `JSON`; `getPanelState_` devuelve las fechas de los borradores como texto.
+    - Envoltorios (con `ctx.createServices_` reemplazado por el falso): `prepareSendPending()` + `executeSendPending(token)` → tres envíos; `executeSendPending` con un token de prueba → rechazo; `getSendProgress(token)` después del envío → `found: true`; `cancelConfirmation(token)` borra la entrada y un `execute` posterior se rechaza; `applyColumnSetup(headerKey)` sobre el fixture V1 deja los encabezados V2; `prepareTestSend('2')` + `executeTestSend(token)` → un envío a la cuenta propia.
+    - Retiros de "Tests V1 que se retiran o se invierten" para `tests/ui.test.js`: `onOpen` con cinco ítems, `createUi_`, `runValidate_`, `runSendPending_`, `runTestSendFromUi_`, `menuShowLog` y `getConfigOptions` (portados arriba). El test estático de la sidebar se ajusta a `getPanelState()` y se reemplaza en el paso 8.
+  - `tests/services.test.js`: se retiran "R-12: writeStatus…", "D-17: appendLog…", "AC-26: appendLog neutraliza…" y "showLogSheet…" (la neutralización queda cubierta por AC-41).
+  - `tests/manifest.test.js`: `LEGACY_LOG_SHEET_NAME === 'Registro Mail Merge'`; ningún archivo de `src/` contiene `appendLog`, `LOG_HEADERS` ni `writeStatus`.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre cada `src/*.js` y test modificado; `grep -rnE "\.alert\(|\.prompt\(|ButtonSet|appendLog|LOG_HEADERS|writeStatus|showLogSheet|statusWrites|logEntries" src tests` sin coincidencias fuera de los propios tests que verifican su ausencia; `git diff --check` sin salida. Commit sugerido: `feat(ui): funciones públicas del panel y retiro del flujo de diálogos V1`.
+
+### Step 8: Sidebar V2 (panel completo)
+
+- **Files**: crear `tests/helpers/fake-dom.js`, `tests/sidebar.test.js`; reescribir `src/Sidebar.html`; modificar `tests/ui.test.js` (test estático de la sidebar).
+- **Do**:
+  1. `tests/helpers/fake-dom.js`: `loadSidebar(options)` lee `src/Sidebar.html`, extrae el `<script>` inline y crea elementos falsos para cada `id` del marcado (con su etiqueta: `select`, `input`, `button`, `progress`, `table`, `tbody`, `div`, etc.). Implementa solo la API permitida por "Detalle del código > Sidebar" (`document.getElementById`, `document.createElement`, `appendChild`, `removeChild`, `firstChild`, `textContent`, `value`, `max`, `disabled`, `hidden`, `className`, `addEventListener`, `new Option`, `select.add`, `setTimeout`, `clearTimeout`) y lanza ante cualquier otra propiedad de `document` (por ejemplo con un `Proxy`), para que la sidebar no salga de ese subconjunto. Expone helpers `click(id)`, `setValue(id, value)`, una cola manual de temporizadores (`pendingTimers()`, `runNextTimer()`), y un `google.script.run` falso encadenable (`withSuccessHandler` / `withFailureHandler`) que registra cada llamada (`{ name, args }`) y permite resolverla o hacerla fallar (`resolve(call, value)`, `fail(call, error)`), más `google.script.host.close`. Ejecuta el script en un contexto `vm` y devuelve `{ document, calls, timers, MailMergePanel }`.
+  2. Tests primero (ver **Test**).
+  3. `src/Sidebar.html` según "Detalle del código > Sidebar", D-29, D-42, D-44 y D-45: secciones `Campaña` (con el campo de nombre opcional y la ayuda "Si lo dejás vacío se genera un ID por envío"), `Validación` (con plan de columnas y `Preparar columnas`, que llama a `applyColumnSetup(setup.headerKey)` y vuelve a validar), `Prueba` (`Revisar prueba`, `Enviar prueba`, `Cancelar`), `Envío` (`Revisar envío`, `Enviar N correos`, `Cancelar`; botón deshabilitado al vencer `expiresAtIso`; aviso de D-47 con `overwriteRows`, también en `Prueba` y `Validación`) y `Progreso y resultados` (contadores, `<progress>`, tabla `Fila` / `Destinatario` / `Resultado` / `Detalle`, motivo de corte, `Esperando el inicio del envío…` con `found: false`). Durante el sondeo, `Destinatario` se toma de la `ConfirmationView` vigente por `rowNumber` (en la prueba, `view.to`), porque el progreso no trae direcciones (D-46); al llegar `SendResultView` la tabla se repinta con sus filas. `PROGRESS_POLL_MS = 2000`; sondeo con `setTimeout` encadenado, una llamada por vez, detenido cuando `execute…` responde o falla; `execute…` una sola vez por token; guía exacta de D-45 ante falla de transporte; lock no disponible → vuelve al estado inicial. Datos solo con `textContent`, `new Option` y `document.createElement`; botones `type="button"`; sin `innerHTML`, `alert`, `confirm`, `prompt`, librerías ni recursos externos; manejadores expuestos en el global `MailMergePanel`; al cargarse solo llama a `getPanelState()`.
+- **Test**:
+  - `tests/sidebar.test.js` (AC-52 / D-45):
+    - Al cargar: una sola llamada, `getPanelState`; los selects se llenan con `new Option` y el nombre de campaña con `current.campaignName`.
+    - `Guardar` llama a `saveConfig` con `sheetId`, `draftId`, `from`, `replyTo` y `campaignName`.
+    - `Enviar N correos` deshabilitado hasta un `prepareSendPending` exitoso; luego muestra N; el clic llama a `executeSendPending` con exactamente el token recibido; un segundo clic no genera otra llamada.
+    - Mientras `executeSendPending` está pendiente hay un solo temporizador de 2000 ms y una sola llamada `getSendProgress` a la vez (la siguiente se agenda recién cuando vuelve la anterior); los contadores y el `<progress>` se actualizan; `found: false` muestra `Esperando el inicio del envío…`; con un progreso sin `recipient` (D-46), la columna `Destinatario` muestra la dirección de esa fila en la `ConfirmationView`, y en la prueba `view.to`.
+    - AC-54 / D-47: una `ConfirmationView` con `overwriteRows: [3]` muestra el aviso de sobrescritura con la fila 3; con `[]` no lo muestra; igual en la `ValidationView`.
+    - Al responder `executeSendPending` se detiene el sondeo (sin temporizadores pendientes ni nuevas llamadas) y se pintan la tabla final y las líneas de resumen.
+    - Falla de `executeSendPending` → último progreso conocido y la guía exacta de D-45, sin otra llamada a `executeSendPending`; volver a enviar exige un `prepareSendPending` nuevo.
+    - `Cancelar` llama a `cancelConfirmation` con el token y oculta la confirmación.
+    - Prueba: `Revisar prueba` con la fila `2` llama a `prepareTestSend`; `Enviar prueba` llama una sola vez a `executeTestSend` con el token.
+    - Validación con `setup.needed` → muestra renombres, agregados y `Preparar columnas`; el clic llama a `applyColumnSetup(setup.headerKey)` y luego a `validateCampaign`.
+    - Un texto del servidor con marcado (`<b>x</b>`) se muestra literal (`textContent`), sin crear elementos.
+  - `tests/ui.test.js`: el test estático de la sidebar verifica que use `getPanelState`, `executeSendPending`, `getSendProgress`, `cancelConfirmation`, `withFailureHandler` y `new Option`; AC-32 sigue cubriendo `innerHTML`, `alert`, `confirm` y `prompt`.
+- **Verify**: `node --test` (todo pasa); `node --check` sobre `tests/helpers/fake-dom.js`, `tests/sidebar.test.js`, `tests/ui.test.js` (el script de la sidebar queda verificado al ejecutarse en `tests/sidebar.test.js`); `git diff --check` sin salida. Commit sugerido: `feat(sidebar): panel único con validación, prueba, confirmación y progreso`.
+
+### Step 9: Documentación y verificación final
+
+- **Files**: modificar `docs/OPERATIONS.md`, `docs/ACCEPTANCE_STATUS.md`, `docs/DECISIONS.md`, `docs/PRODUCT.md`, `AGENTS.md`, `README.md`.
+- **Do**:
+  1. `docs/OPERATIONS.md`: panel único y sus secciones, columnas gestionadas, "Preparar columnas" con los bloqueos (a) a (e) de D-34 y cómo resolverlos a mano (incluido renombrar columnas propias `Fecha`, `Campaña` o `Detalle`), el aviso de sobrescritura de D-47 y su riesgo residual en hojas completas con columnas propias de esos nombres, qué guarda la caché (D-27, D-46), la prueba que deja `Email Sent` y cómo borrarlo para el envío real, conciliación con `Detalle` (`ENVIANDO` / `REVISAR`), sidebar cerrada durante el envío, tope de 500 filas y envío por tandas con filtros, y la checklist en vivo actualizada con "Pendiente de validación en vivo" (reemplaza los ítems de `Ui.alert`).
+  2. `docs/ACCEPTANCE_STATUS.md`: AC-01 a AC-54, cada uno con el título de su test o su retiro justificado (AC-17 → AC-35 / AC-52, AC-26 → AC-39 / AC-41, AC-27 → AC-33, AC-31 retirado y reemplazado por AC-43), los resultados reales de los comandos y el nivel `LOCAL_VERIFIED` con lo `PENDING LIVE VALIDATION`; deja de citar los tests V1 retirados.
+  3. `docs/DECISIONS.md`: D-25 a D-47 (con la fecha de aprobación de cada una), con las reemplazadas (D-01 en lo que respecta a encabezados, D-03, D-07, D-12, D-17, D-18) y modificadas (D-14, D-23) marcadas.
+  4. `docs/PRODUCT.md`: tabla de compatibilidad con `Fecha`, `Campaña`, `Resultado`, `Detalle` y los encabezados heredados que solo reconoce la migración.
+  5. `AGENTS.md`: literales de compatibilidad (encabezados V2; `Mail Merge Status` y `Scheduled Date` como heredados), alcance ("consultar el registro" → resultados en la pestaña), "Estado del proyecto" (V2 `LOCAL_VERIFIED`, pendiente en Google) y "Fuentes vigentes" con este plan; título sin "V1" si corresponde.
+  6. `README.md`: panel en lugar del menú de cinco ítems y del `Registro Mail Merge`, archivos nuevos (`Setup.js`, `Confirmation.js`) y el recuento real de tests.
+  7. No se tocan `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md`, `docs/ENGINEERING_PLAYBOOK.md`, `docs/REFERENCE_AUDIT.md` ni `PROMPT_CLAUDE_CODE.md`.
+- **Test**: sin código nuevo; la suite completa debe seguir en verde y los títulos citados en `docs/ACCEPTANCE_STATUS.md` deben existir en `tests/`.
+- **Verify**: `node --test` (todo pasa; anotar el recuento real); `node --check` sobre cada `src/*.js` y `tests/**/*.js`; `grep -rnE "\.alert\(|\.prompt\(|ButtonSet|innerHTML|UrlFetchApp|newTrigger|setSharing|appendLog|LOG_HEADERS" src` sin salida (criterio 2); `git diff --exit-code e5ad9ac -- src/appsscript.json` (manifest idéntico al de la V1, criterio 3); `git diff --check`, `git status --short`, `git remote -v` (vacío); informe de cierre según `AGENTS.md` (archivos y commits, resultados reales, criterios cubiertos, riesgos, **comprobado localmente**, **pendiente en Google** y **no probado**). Commit sugerido: `docs: documentar Mail Merge V2 (panel, columnas gestionadas y confirmación por token)`.
