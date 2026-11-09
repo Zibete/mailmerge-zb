@@ -1,0 +1,27 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.clasp.json
+.clasprc.json
+credentials.json
+token.json
+*.pem
+*.key
+.claude/settings.local.json
+
+# Tooling and outputs
+node_modules/
+coverage/
+dist/
+build/
+.tmp/
+tmp/
+*.log
+.DS_Store
+Thumbs.db
+
+# Real datasets must never be committed
+private-data/
+local-data/
+secrets/
