@@ -106,6 +106,52 @@ test('Camino feliz: cada fila pasa por ENVIANDO → send → Email Sent y el loc
   assert.doesNotMatch(summary, /entregad/i);
 });
 
+test('AC-11: filas ocultas por el usuario o por un filtro no entran en la validación ni en el envío real', () => {
+  const { ctx, fixture, fake } = setup();
+  fixture.sheets[0].hiddenByUser[2] = true; // fila 3
+  fixture.sheets[0].hiddenByFilter[3] = true; // fila 4
+  const { prepared, result } = runSend(ctx, fake, fixture);
+
+  assert.deepEqual(plain(prepared.report.excluded), [
+    { rowNumber: 3, reason: 'oculta por el usuario' },
+    { rowNumber: 4, reason: 'oculta por un filtro' },
+  ]);
+  assert.deepEqual(sentTo(fake), [EMAILS[2]]);
+  assert.equal(result.sent, 1);
+  assert.deepEqual(plain(fake.calls.statusWrites).map((w) => w.rowNumber), [2, 2]);
+  assert.equal(status(fake, 3), '');
+  assert.equal(status(fake, 4), '');
+});
+
+test('AC-07 / AC-13: filas inválidas en la validación nunca llegan a Gmail en el envío real', () => {
+  const { ctx, fixture, fake } = setup();
+  fake.setCell(2, 'Email Address', 'alpha@example.test; beta@example.test');
+  fixture.drive.files[DRIVE_IDS.PDF_BETA].noAccess = true;
+  const { prepared, result } = runSend(ctx, fake, fixture);
+
+  assert.deepEqual(plain(prepared.report.invalid).map((row) => row.rowNumber), [2, 3]);
+  assert.deepEqual(sentTo(fake), [EMAILS[4]]);
+  assert.equal(result.sent, 1);
+  assert.deepEqual(plain(fake.calls.statusWrites).map((w) => w.rowNumber), [4, 4]);
+  assert.equal(status(fake, 2), '');
+  assert.equal(status(fake, 3), '');
+});
+
+test('AC-09: un PDF exportado que supera el límite en la Fase B omite la fila sin claim ni envío', () => {
+  const { ctx, fixture, fake } = setup();
+  // Alpha: comunes 3000 + PDF 1000 = 4000 en la validación (el nativo pesa 0);
+  // al exportar el nativo suma 1500 → 5500 > 5000. Beta: 3000 + 2000 = 5000 (en el máximo).
+  getConst(ctx, 'LIMITS').MAX_TOTAL_ATTACHMENT_BYTES = 5000;
+  const { prepared, result } = runSend(ctx, fake, fixture);
+
+  assert.deepEqual(plain(prepared.report.valid.map((row) => row.rowNumber)), [2, 3, 4]);
+  assert.deepEqual(sentTo(fake), [EMAILS[3], EMAILS[4]]);
+  assert.deepEqual(skippedRows(result), [2]);
+  assert.match(plain(result.skipped)[0].reason, /Los adjuntos suman/);
+  assert.ok(!fake.calls.statusWrites.some((w) => w.rowNumber === 2));
+  assert.equal(status(fake, 2), '');
+});
+
 test('AC-18: sin lock no envía ni escribe y lo informa', () => {
   const { ctx, fixture, fake } = setup({ lockAvailable: false });
   const { result } = runSend(ctx, fake, fixture);

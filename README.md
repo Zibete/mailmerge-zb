@@ -31,6 +31,10 @@ node --test      # ejecuta todos los *.test.js, sin red ni credenciales de Googl
 
 En Git Bash: `export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH"` y luego `node --test`. El proyecto no tiene dependencias: no hace falta `npm install`.
 
+## Guías de operación y estado de aceptación
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md): uso del menú `Mail Merge`, estados, reconciliación manual, límites configurables, checklist `PENDING LIVE VALIDATION` y activación futura (no ejecutada).
+- [`docs/ACCEPTANCE_STATUS.md`](docs/ACCEPTANCE_STATUS.md): estado de cada criterio AC-01 a AC-31, tests que lo cubren y verificaciones en vivo pendientes. Nivel alcanzado: `LOCAL_VERIFIED`.
+
 ## Reading order
 1. `AGENTS.md` — durable engineering contract.
 2. `CLAUDE.md` — Claude Code import/entry point.
