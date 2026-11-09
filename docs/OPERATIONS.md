@@ -150,4 +150,4 @@ Estos pasos **no se ejecutaron** y no forman parte del desarrollo local. Requier
 8. Recorrer la checklist `PENDING LIVE VALIDATION` con destinatarios de prueba, empezando por `Validar` y `Enviar prueba…`.
 9. Registrar los resultados y recién entonces decidir, con aprobación escrita, un primer uso real.
 
-Alternativa sin `clasp`: en la hoja de prueba, `Extensiones → Apps Script`, crear un archivo por cada `src/*.js` y `src/Sidebar.html` con el mismo nombre, y reemplazar el manifest `appsscript.json` (visible activando "Mostrar el archivo de manifiesto" en la configuración del proyecto).
+Alternativa sin `clasp`: en la hoja de prueba, `Extensiones → Apps Script`, crear un archivo por cada `src/*.js` y `src/Sidebar.html` con el mismo nombre, y reemplazar el manifest `appsscript.json` (visible activando la casilla `Show "appsscript.json" manifest file in editor` en la configuración del proyecto).
