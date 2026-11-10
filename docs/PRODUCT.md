@@ -17,15 +17,22 @@ The goal is a **near-equivalent, smaller, locally maintainable alternative**, no
 7. **Control:** show outcomes in `Mail Merge Status` and a minimal separate log; allow a later run to process only unambiguous pending rows.
 
 ## Compatibility contract
-| Column | Meaning | Initial decision |
-|---|---|---|
-| `Email Address` | Destination of one email per row | Required, exact name |
-| `File Attachments` | Comma-separated Drive links, each belonging to the row | Optional, strict validation |
-| `Mail Merge Status` | Existing add-on status / new send state | Preserve and never silently clear |
-| `Scheduled Date` | Legacy deferred sending | May exist; **do not schedule in V1** |
-| Any other column | Variable `{{Exact header}}` | Preserve displayed text and formatting-relevant characters safely |
 
-Existing `SKIP`, `Email Sent` and any other nonblank status are **not eligible** by default. A manually hidden or filtered-out row is not eligible. Missing or ambiguous columns must fail validation before sending. Do not silently guess recipient columns.
+**V2 (D-31, aprobada el 2026-11-09):** los resultados viven en cuatro columnas gestionadas de la propia pestaña y la pestaña de registro aparte deja de escribirse (D-32). Las líneas 7 de "Intended workflow" y 3 de "Core acceptance outcomes" describen la intención de la V1: en la V2 la prueba deja `Resultado = Email Sent` en la fila probada (D-40) y no hay registro aparte.
+
+| Columna | Significado | Decisión vigente (V2) |
+|---|---|---|
+| `Email Address` | Destino de un correo por fila | Obligatoria, nombre exacto |
+| `File Attachments` | Enlaces de Drive separados por coma, propios de la fila | Opcional, validación estricta |
+| `Resultado` | Estado de envío de la fila (`SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR` u otro texto); reemplaza a `Mail Merge Status` | Obligatoria (columna gestionada). Solo una fila con `Resultado` vacío es elegible; el script nunca cambia un valor existente |
+| `Fecha` | Momento en que el script inició el envío de la fila; reemplaza a `Scheduled Date` | Obligatoria (columna gestionada), informativa; no decide la elegibilidad ni programa envíos |
+| `Campaña` | Nombre de la campaña o ID generado por confirmación (D-39) | Obligatoria (columna gestionada), informativa |
+| `Detalle` | Motivo resumido del resultado, en una línea, sin URLs (D-38) | Obligatoria (columna gestionada), informativa; guía la conciliación de `ENVIANDO` / `REVISAR` |
+| `Mail Merge Status` | Estado de la V1 y del complemento | **Heredado**: solo lo reconoce "Preparar columnas", que lo renombra a `Resultado` sin mover los datos; mientras exista, la validación falla |
+| `Scheduled Date` | Envío diferido de la V1 y del complemento | **Heredado**: solo lo reconoce "Preparar columnas", que lo renombra a `Fecha`; se bloquea si alguna fila tiene fecha y estado vacío (D-34 c) |
+| Cualquier otra columna | Variable `{{Encabezado exacto}}` | Se usa el texto mostrado, con escapado seguro. Las columnas gestionadas no se pueden usar como marcador (D-35) |
+
+Existing `SKIP`, `Email Sent` and any other nonblank status are **not eligible** by default (en la V2, en `Resultado`). A manually hidden or filtered-out row is not eligible. Missing or ambiguous columns must fail validation before sending. Do not silently guess recipient columns.
 
 ## Core acceptance outcomes
 - Different recipients receive only their intended variables, common attachments and row-specific files.

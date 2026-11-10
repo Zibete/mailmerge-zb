@@ -240,7 +240,7 @@ Vistas (JSON plano, textos ya saneados):
 
 1. `config = props.getConfig()` (configuración incompleta → error sin lock ni escrituras). `tryLock(LIMITS.LOCK_WAIT_MS)`; si falla, `{ ok: false, errors: ['Hay otra ejecución en curso; reintentá en unos minutos'] }`.
 2. Dentro de `try/finally` con `release()`: `readSheet(config.sheetId)`, `planColumnSetup_`. Si `headerKey !== expectedHeaderKey` → `La fila de encabezados cambió; volvé a validar` sin escribir. Si el plan tiene errores → los devuelve sin escribir. Si `needed` es `false` → `ok` sin escribir.
-3. Una sola llamada `writeHeaderCells(sheetId, [...renames, ...appends])`, con `renames` en el orden de D-33 (`Resultado` antes que `Fecha`) y `appends` con `Resultado` primero si falta. Si lanza → `No se pudieron preparar todas las columnas; revisá la fila 1 y volvé a intentar (la operación se puede repetir)`.
+3. Una sola llamada `writeHeaderCells(sheetId, cells)`, donde `cells` empieza siempre por la celda `Resultado`, renombrada (`Mail Merge Status` → `Resultado`) o agregada, y sigue con el resto de los renombres (`Scheduled Date` → `Fecha`) y de los agregados en el orden de D-33. Así, en una hoja con `Scheduled Date` y sin columna de estado, `Resultado` se agrega antes de renombrar `Fecha`. Si lanza → `No se pudieron preparar todas las columnas; revisá la fila 1 y volvé a intentar (la operación se puede repetir)`.
 
 ### `Preflight.js`
 
