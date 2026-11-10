@@ -32,7 +32,7 @@ The goal is a **near-equivalent, smaller, locally maintainable alternative**, no
 | `Scheduled Date` | Envío diferido de la V1 y del complemento | **Heredado**: solo lo reconoce "Preparar columnas", que lo renombra a `Fecha`; se bloquea si alguna fila tiene fecha y estado vacío (D-34 c) |
 | Cualquier otra columna | Variable `{{Encabezado exacto}}` | Se usa el texto mostrado, con escapado seguro. Las columnas gestionadas no se pueden usar como marcador (D-35) |
 
-Existing `SKIP`, `Email Sent` and any other nonblank status are **not eligible** by default (en la V2, en `Resultado`). A manually hidden or filtered-out row is not eligible. Missing or ambiguous columns must fail validation before sending. Do not silently guess recipient columns.
+Los estados `SKIP`, `Email Sent` y cualquier otro valor no vacío (en la V2, en `Resultado`) **no son elegibles** por defecto. Una fila oculta o filtrada manualmente no es elegible. Las columnas faltantes o ambiguas hacen fallar la validación antes de enviar. Nunca se adivina en silencio la columna de destinatarios.
 
 ## Core acceptance outcomes
 - Different recipients receive only their intended variables, common attachments and row-specific files.
