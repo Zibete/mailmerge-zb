@@ -312,6 +312,23 @@ function viewText_(value) {
   return value === null || value === undefined ? '' : sanitizeHeaderValue_(value);
 }
 
+// Recorta un texto a `max` caracteres sin dejar una palabra cortada al final
+// (D-46): si el corte cae dentro de una palabra, la descarta entera, para que
+// nunca quede media dirección de correo. Solo si la primera palabra ya supera
+// `max` (no hay espacio donde cortar) se recorta en seco.
+function truncateWholeWords_(text, max) {
+  const value = String(text);
+  if (value.length <= max) {
+    return value;
+  }
+  const cut = value.slice(0, max);
+  if (/\s/.test(value.charAt(max))) {
+    return cut.replace(/\s+$/, '');
+  }
+  const whole = cut.replace(/\S+$/, '').replace(/\s+$/, '');
+  return whole === '' ? cut : whole;
+}
+
 function byRowNumber_(a, b) {
   return a.rowNumber - b.rowNumber;
 }

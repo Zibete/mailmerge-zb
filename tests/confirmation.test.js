@@ -632,6 +632,54 @@ test('AC-38 / D-29 / D-46: publishProgress_ publica en MM_PROG_<token> con TTL 1
   record.rows.forEach((row) => assert.deepEqual(Object.keys(row).sort(), ['detail', 'result', 'rowNumber']));
 });
 
+// Publica un progreso con una sola fila y devuelve el registro publicado.
+function publishedWith(ctx, fake, detail, stoppedReason) {
+  ctx.publishProgress_(
+    fake.deps,
+    FIRST_TOKEN,
+    sampleProgress({
+      rows: [{ rowNumber: 3, recipient: 'beta@example.test', result: 'REVISAR', detail }],
+      stoppedReason,
+    })
+  );
+  const put = fake.calls.cachePuts[fake.calls.cachePuts.length - 1];
+  return { raw: put.value, record: JSON.parse(put.value) };
+}
+
+test('D-46: publishProgress_ redacta antes de recortar: una dirección que cruza MAX_DETAIL_CHARS no deja fragmentos', () => {
+  const { ctx, fake } = setup();
+  const prefix = 'x '.repeat(145);
+  assert.equal(prefix.length, 290);
+
+  const { raw, record } = publishedWith(
+    ctx,
+    fake,
+    prefix + 'beta@example.test y más texto',
+    prefix + 'gamma@example.test y más texto'
+  );
+
+  assert.equal(raw.includes('@'), false, raw);
+  assert.equal(/beta|gamma|example/.test(raw), false, raw);
+  assert.ok(record.rows[0].detail.length <= 300);
+  assert.ok(record.stoppedReason.length <= 300);
+});
+
+test('D-46: publishProgress_ redacta fragmentos de direcciones que ya llegan recortados (parte local con @ o dominio con @)', () => {
+  const { ctx, fake } = setup();
+
+  const cases = [
+    ['Gmail lanzó una excepción (Destinatario rechazado: beta@); revisá la carpeta Enviados', 'beta'],
+    ['@example.test rechazó el mensaje', 'example.test'],
+    ['Rechazado: beta.larga@exa', 'beta.larga'],
+  ];
+  cases.forEach(([detail, fragment]) => {
+    const { raw } = publishedWith(ctx, fake, detail, 'Se detuvo por ' + detail);
+    assert.equal(raw.includes('@'), false, raw);
+    assert.equal(raw.includes(fragment), false, raw);
+    assert.ok(raw.includes('[dirección]'), raw);
+  });
+});
+
 test('AC-38 / D-29: publishProgress_ nunca lanza aunque cache.put falle', () => {
   const { ctx, fake } = setup({ failOn: { cachePut: true } });
 

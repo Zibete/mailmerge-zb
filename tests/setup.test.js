@@ -338,6 +338,121 @@ test('AC-43 / D-34 (e): Detalle propia con valores solo en filas con Resultado n
   );
 });
 
+test('AC-43 / D-34 (e) extendida: con Scheduled Date y sin columna de estado, Campaña propia con valor → bloquea con la columna y la fila', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Scheduled Date', 'Campaña'],
+    [
+      ['a@example.test', '', 'Campaña vieja'],
+      ['b@example.test', '', ''],
+    ]
+  );
+
+  const { plan } = assertBlocked(ctx, fixture, /"Campaña"/);
+
+  assert.deepEqual(plan.blockedRows, [2]);
+  assert.equal(plan.errors.length, 1);
+  assert.match(plan.errors[0], /fila 2/);
+  assert.match(plan.errors[0], /sin estado/);
+});
+
+test('AC-43 / D-34 (e) extendida: con Scheduled Date y sin columna de estado, Detalle propia con valor solo en una fila oculta → bloquea', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Scheduled Date', 'Detalle'],
+    [
+      ['a@example.test', '', ''],
+      { values: ['b@example.test', '', 'nota del operador'], hidden: true },
+    ]
+  );
+
+  const { plan } = assertBlocked(ctx, fixture, /"Detalle"/);
+
+  assert.deepEqual(plan.blockedRows, [3]);
+  assert.match(plan.errors[0], /fila 3/);
+});
+
+test('AC-43 / D-34 (e) extendida: con Scheduled Date y sin columna de estado, una Campaña propia vacía no bloquea y la migración la adopta', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Scheduled Date', 'Campaña'],
+    [
+      ['a@example.test', '', ''],
+      { values: ['b@example.test', '', ''], hidden: true },
+    ]
+  );
+  const dataBefore = JSON.stringify(campaignSheet(fixture).values.slice(1));
+
+  const { result } = runSetup(ctx, fixture);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(headers(fixture), ['Email Address', 'Fecha', 'Campaña', 'Resultado', 'Detalle']);
+  assert.equal(
+    JSON.stringify(campaignSheet(fixture).values.slice(1).map((row) => row.slice(0, 3))),
+    dataBefore
+  );
+});
+
+test('AC-43 / D-34 (e) extendida: estado parcial Resultado + Scheduled Date con Detalle propia con valor en filas con Resultado vacío (visible y oculta) → bloquea', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Resultado', 'Scheduled Date', 'Detalle'],
+    [
+      ['a@example.test', '', '', 'nota'],
+      { values: ['b@example.test', '', '', 'otra nota'], hidden: true },
+      ['c@example.test', 'Email Sent', '2026-01-01', 'histórico'],
+      ['d@example.test', '', '', ''],
+    ]
+  );
+
+  const { plan } = assertBlocked(ctx, fixture, /"Detalle"/);
+
+  assert.deepEqual(plan.blockedRows, [2, 3]);
+  assert.equal(plan.errors.length, 1);
+  assert.match(plan.errors[0], /filas 2, 3/);
+  assert.match(plan.errors[0], /"Resultado" vacío/);
+});
+
+test('AC-43 / D-34 (e) extendida: estado parcial Resultado + Scheduled Date con Campaña propia con valores solo en filas con estado → no bloquea y no toca esas celdas', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Resultado', 'Scheduled Date', 'Campaña'],
+    [
+      ['a@example.test', 'Email Sent', '2026-01-01', 'Campaña A'],
+      { values: ['b@example.test', 'SKIP', '', 'Campaña B'], hidden: true },
+      ['c@example.test', '', '', ''],
+    ]
+  );
+  const campaignsBefore = campaignSheet(fixture).values.slice(1).map((row) => row[3]);
+
+  const { result } = runSetup(ctx, fixture);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.applied, {
+    renames: [{ column: 2, from: 'Scheduled Date', to: 'Fecha' }],
+    appends: [{ column: 4, name: 'Detalle' }],
+  });
+  assert.deepEqual(headers(fixture), ['Email Address', 'Resultado', 'Fecha', 'Campaña', 'Detalle']);
+  assert.deepEqual(
+    campaignSheet(fixture).values.slice(1).map((row) => row[3]),
+    campaignsBefore
+  );
+});
+
+test('AC-43 / D-34 (c) + (e) extendida: la misma fila bloqueada por las dos reglas aparece una sola vez en blockedRows', () => {
+  const ctx = loadAppsScript();
+  const fixture = customFixture(
+    ['Email Address', 'Scheduled Date', 'Detalle'],
+    [['a@example.test', '2026-01-01', 'nota']]
+  );
+
+  const { plan } = assertBlocked(ctx, fixture, /"Detalle"/);
+
+  assert.deepEqual(plan.blockedRows, [2]);
+  assert.equal(plan.errors.length, 2);
+  assert.ok(plan.errors.some((error) => error.includes('"Scheduled Date" con valor')));
+});
+
 test('AC-44: una segunda ejecución no cambia nada y devuelve ok', () => {
   const ctx = loadAppsScript();
   const fixture = createLegacyFixture();

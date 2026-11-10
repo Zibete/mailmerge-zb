@@ -1059,3 +1059,70 @@ test('D-46: el progreso publicado no contiene direcciones ni recipient; la SendR
   assert.ok(runs[2].result.rows[0].detail.includes('operator@example.test'));
   assert.ok(progressRecords(trial.fake, trialPrep.token).pop().rows[0].detail.includes('[dirección]'));
 });
+
+// Un texto incluye una dirección solo completa: si aparece su parte local,
+// aparece la dirección entera.
+function assertNoPartialAddress(text, address) {
+  const local = address.split('@')[0];
+  if (text.includes(local)) {
+    assert.ok(text.includes(address), 'dirección parcial en: ' + text);
+  }
+}
+
+test('D-46: summarizeError_ y sendDetailText_ nunca cortan una palabra (ni una dirección) por la mitad', () => {
+  const ctx = loadAppsScript();
+
+  const summary = ctx.summarizeError_(new Error('Rechazado: ' + 'x '.repeat(92) + 'beta@example.test fin'));
+  assert.ok(summary.length <= 200);
+  assertNoPartialAddress(summary, 'beta@example.test');
+  assert.equal(summary.includes('beta@'), false, summary);
+
+  const detail = ctx.sendDetailText_('x '.repeat(145) + 'gamma@example.test fin');
+  assert.ok(detail.length <= 300);
+  assertNoPartialAddress(detail, 'gamma@example.test');
+
+  // Un solo token más largo que el límite se recorta igual (no queda vacío).
+  assert.equal(ctx.sendDetailText_('y'.repeat(1000)), 'y'.repeat(300));
+  // Un texto dentro del límite no cambia.
+  assert.equal(ctx.sendDetailText_('Aceptado por Gmail'), 'Aceptado por Gmail');
+});
+
+test('D-46: summarizeError_ sanea cualquier valor lanzado: una línea, sin URLs, sin lanzar', () => {
+  const ctx = loadAppsScript();
+
+  assert.equal(ctx.summarizeError_(new Error('línea 1\nlínea 2\tfin')), 'línea 1 línea 2 fin');
+  assert.equal(ctx.summarizeError_('texto\r\nlanzado'), 'texto lanzado');
+  assert.equal(ctx.summarizeError_(new Error('ver https://example.test/x?id=1 ahora')), 'ver [URL] ahora');
+  assert.doesNotThrow(() => ctx.summarizeError_(null));
+  assert.doesNotThrow(() => ctx.summarizeError_(undefined));
+  assert.doesNotThrow(() => ctx.summarizeError_({ message: { anidado: true } }));
+  assert.equal(typeof ctx.summarizeError_({ message: { anidado: true } }), 'string');
+});
+
+test('D-46: una excepción de Gmail cuya dirección cae justo en el recorte no filtra la parte local al progreso ni deja una dirección parcial', () => {
+  const { ctx, fake } = setup();
+  const originalSend = fake.deps.gmail.send;
+  // 'Rechazado: ' + 184 caracteres = 195: el recorte de 200 caería en "beta@".
+  const message = 'Rechazado: ' + 'x '.repeat(92) + EMAILS[3] + ' por política';
+  assert.equal(message.indexOf(EMAILS[3]), 195);
+  fake.deps.gmail.send = (sent) => {
+    if (sent.to === EMAILS[3]) {
+      throw new Error(message);
+    }
+    return originalSend(sent);
+  };
+
+  const { prep, result } = runSend(ctx, fake);
+
+  const puts = progressPuts(fake);
+  assert.ok(puts.length > 0);
+  puts.forEach((put) => {
+    assert.equal(put.value.includes('@'), false, put.value);
+    assert.equal(put.value.includes('beta'), false, put.value);
+  });
+  const row = result.rows.find((item) => item.rowNumber === 3);
+  assert.equal(row.result, 'REVISAR');
+  assertNoPartialAddress(row.detail, EMAILS[3]);
+  assertNoPartialAddress(String(fake.getCell(3, 'Detalle')), EMAILS[3]);
+  assert.equal(progressRecords(fake, prep.token).pop().state, 'TERMINADO');
+});

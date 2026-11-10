@@ -20,9 +20,10 @@ const CONFIRMATION_TOKEN_PATTERN_ = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 // Digest SHA-256 en hexadecimal en minúsculas (`deps.crypto.sha256Hex`).
 const CONFIRMATION_DIGEST_PATTERN_ = /^[0-9a-f]{64}$/;
 
-// Texto con forma de dirección de correo, que el progreso en caché reemplaza
-// por `[dirección]` (D-46).
-const PROGRESS_EMAIL_PATTERN_ = /[^\s@<>()",;:]+@[^\s@<>()",;:]+/g;
+// Toda palabra que contenga `@` (una dirección de correo o un fragmento
+// recortado de una, como `beta@` o `@dominio`), que el progreso en caché
+// reemplaza por `[dirección]` (D-46).
+const PROGRESS_EMAIL_PATTERN_ = /[^\s<>()",;:]*@[^\s<>()",;:]*/g;
 
 const CONFIRMATION_TEXT_ = {
   UNKNOWN_KIND: 'Tipo de confirmación desconocido; no se preparó nada',
@@ -378,15 +379,15 @@ function cancelConfirmation_(deps, token) {
   return { ok: true };
 }
 
-// Texto del progreso en caché (D-46, D-38): una línea, sin URLs, con las
-// direcciones de correo reemplazadas por `[dirección]` y acotado a
-// `MAX_DETAIL_CHARS`. La redacción va antes del recorte para que el recorte no
-// deje una dirección parcial.
+// Texto del progreso en caché (D-46, D-38): una línea, sin URLs, con toda
+// palabra que contenga `@` reemplazada por `[dirección]` (también fragmentos
+// que ya llegan recortados, como `beta@` o `@dominio`) y acotado a
+// `MAX_DETAIL_CHARS` sin cortar palabras. La redacción va antes del recorte.
 function progressText_(value) {
-  return viewText_(value)
+  const redacted = viewText_(value)
     .replace(/https?:\/\/\S+/gi, '[URL]')
-    .replace(PROGRESS_EMAIL_PATTERN_, CONFIRMATION_TEXT_.ADDRESS)
-    .slice(0, LIMITS.MAX_DETAIL_CHARS);
+    .replace(PROGRESS_EMAIL_PATTERN_, CONFIRMATION_TEXT_.ADDRESS);
+  return truncateWholeWords_(redacted, LIMITS.MAX_DETAIL_CHARS);
 }
 
 function progressCount_(value) {

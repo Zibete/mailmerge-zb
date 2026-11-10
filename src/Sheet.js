@@ -266,7 +266,8 @@ function findSetupRows_(values, predicate) {
  *   a la derecha de la fila más larga de `values`.
  * - Falla cerrado: un encabezado duplicado o ambiguo, o cualquiera de los
  *   bloqueos (a) a (e) de D-34 (evaluados sobre todas las filas, también las
- *   ocultas), deja el error en `errors` y el plan sin renombres ni agregados.
+ *   ocultas; (e) también cuando la hoja todavía tiene `Scheduled Date`), deja
+ *   el error en `errors` y el plan sin renombres ni agregados.
  *   `blockedRows` reúne las filas de (c) y (e), ascendente y sin duplicados.
  */
 function planColumnSetup_(sheetData) {
@@ -375,19 +376,29 @@ function planColumnSetup_(sheetData) {
     });
   }
 
-  // (e) Sin heredadas, con `Resultado`: una Fecha, Campaña o Detalle presente
-  // con valor en filas con `Resultado` vacío se reemplazaría al enviar.
-  if (!hasLegacy && has(columns.result)) {
+  // (e) Sin `Mail Merge Status` y, o bien sin heredadas y con `Resultado`, o
+  // bien todavía con `Scheduled Date` (con `Resultado`, en un estado parcial,
+  // o sin columna de estado): una Fecha, Campaña o Detalle presente con valor
+  // en filas sin estado se reemplazaría al enviar. Mientras exista
+  // `Scheduled Date`, ninguna de esas columnas puede venir de la migración (los
+  // agregados se escriben después de los renombres), así que la reanudación no
+  // cae en esta regla. Sin columna de estado, todas las filas cuentan como sin
+  // estado.
+  if (!has(legacy.status) && (has(legacy.scheduled) || has(columns.result))) {
+    const withoutStatus = has(columns.result)
+      ? 'filas con "' + HEADERS.RESULT + '" vacío'
+      : 'filas sin estado (la pestaña todavía no tiene "' + HEADERS.RESULT + '")';
     ownManaged.forEach(function (pair) {
       const rows = findSetupRows_(values, function (row) {
-        return cellText_(row[pair[0]]) !== '' && cellText_(row[columns.result]) === '';
+        const status = has(columns.result) ? cellText_(row[columns.result]) : '';
+        return cellText_(row[pair[0]]) !== '' && status === '';
       });
       if (rows.length > 0) {
         rows.forEach(function (rowNumber) {
           blocked[rowNumber] = true;
         });
         plan.errors.push(
-          'La columna "' + pair[1] + '" tiene valores en filas con "' + HEADERS.RESULT + '" vacío (' +
+          'La columna "' + pair[1] + '" tiene valores en ' + withoutStatus + ' (' +
             describeSetupRows_(rows) + '); Mail Merge los reemplazaría al enviar. Renombrá la columna' +
             renameHint(pair[1]) + ' o vaciá esas celdas si no tienen datos que conservar.'
         );

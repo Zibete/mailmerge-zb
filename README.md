@@ -7,7 +7,7 @@ Herramienta pequeña de **combinación de correspondencia** en **Google Apps Scr
 | Aspecto | Estado |
 |---|---|
 | Implementación de V2 | **Completada** según `plans/2026-11-09_mail-merge-v2.md`, en commits locales (sobre la V1 de `plans/2026-11-08_mail-merge-v1.md`) |
-| Tests offline (lógica y adaptadores simulados) | **300/300 aprobados** en la verificación de cierre de la V2; ejecutar `node --test` para el estado actual |
+| Tests offline (lógica y adaptadores simulados) | **311/311 aprobados** en la verificación de cierre de la V2; ejecutar `node --test` para el estado actual |
 | Integración con Apps Script, Gmail y Drive | **`PENDING LIVE VALIDATION`** |
 | Instalación, OAuth y envíos reales | **No realizados** |
 

@@ -149,21 +149,28 @@ function readRowSafe_(deps, sheetId, rowNumber, width) {
   }
 }
 
-// Resumen de una excepción para `Detalle` y la sidebar: una sola línea,
-// sin URLs y acotada.
+// Largo máximo del resumen de una excepción dentro de `Detalle`.
+const ERROR_SUMMARY_CHARS_ = 200;
+
+// Resumen de cualquier valor lanzado para `Detalle` y la sidebar (D-38,
+// D-46): una sola línea, sin URLs y acotado sin cortar palabras (nunca deja
+// media dirección). Nunca lanza, aunque el valor no sea un `Error`.
 function summarizeError_(error) {
-  const text = error && error.message ? error.message : String(error);
-  return sanitizeHeaderValue_(text)
-    .replace(/https?:\/\/\S+/gi, '[URL]')
-    .slice(0, 200);
+  let text;
+  try {
+    const raw = error && error.message !== undefined && error.message !== null ? error.message : error;
+    text = typeof raw === 'string' ? raw : String(raw);
+  } catch (e) {
+    text = 'error sin descripción';
+  }
+  return truncateWholeWords_(viewText_(text).replace(/https?:\/\/\S+/gi, '[URL]'), ERROR_SUMMARY_CHARS_);
 }
 
 // Texto de `Detalle` y de los motivos por fila del motor V2 (D-38): una sola
-// línea, sin URLs y con hasta `MAX_DETAIL_CHARS` caracteres.
+// línea, sin URLs y con hasta `MAX_DETAIL_CHARS` caracteres, sin cortar
+// palabras (D-46).
 function sendDetailText_(text) {
-  return viewText_(text)
-    .replace(/https?:\/\/\S+/gi, '[URL]')
-    .slice(0, LIMITS.MAX_DETAIL_CHARS);
+  return truncateWholeWords_(viewText_(text).replace(/https?:\/\/\S+/gi, '[URL]'), LIMITS.MAX_DETAIL_CHARS);
 }
 
 // La configuración vigente es idéntica a la confirmada (D-43): pestaña,
