@@ -4,152 +4,1017 @@
     <base target="_top">
     <meta charset="utf-8">
     <style>
+      [hidden] { display: none !important; }
       body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; color: #202124; }
-      label { display: block; margin-top: 12px; font-weight: bold; }
+      h2 { font-size: 14px; margin: 0 0 8px; }
+      section { border-bottom: 1px solid #dadce0; padding: 12px 0; }
+      label { display: block; margin-top: 10px; font-weight: bold; }
+      label.consent { font-weight: normal; display: flex; gap: 6px; align-items: flex-start; }
+      label.consent input { width: auto; margin-top: 2px; }
       select, input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 4px; }
       .hint { margin: 4px 0 0; color: #5f6368; font-size: 12px; }
-      .buttons { margin-top: 16px; }
-      button { margin-right: 8px; padding: 6px 12px; }
-      #message { margin-top: 12px; white-space: pre-wrap; }
-      #message.error { color: #b3261e; }
-      #message.ok { color: #137333; }
+      .buttons { margin-top: 10px; }
+      button { margin: 4px 8px 0 0; padding: 6px 12px; }
+      .message { margin: 8px 0 0; white-space: pre-wrap; }
+      .error { color: #b3261e; }
+      .ok { color: #137333; }
+      .warning { color: #8a4b00; font-weight: bold; }
+      .view p, .view li { margin: 4px 0; word-break: break-word; }
+      .view ul { margin: 4px 0; padding-left: 18px; }
+      .confirmation { margin-top: 8px; padding: 8px; background: #f8f9fa; border: 1px solid #dadce0; }
+      .counters { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 8px 0; }
+      progress { width: 100%; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+      th, td { border: 1px solid #dadce0; padding: 3px; text-align: left; vertical-align: top; word-break: break-word; }
     </style>
   </head>
   <body>
-    <form id="config-form" novalidate>
+    <section id="section-campaign">
+      <h2>Campaña</h2>
       <label for="sheet">Pestaña de la campaña</label>
-      <select id="sheet" required></select>
+      <select id="sheet"></select>
 
       <label for="draft">Borrador de Gmail (plantilla)</label>
-      <select id="draft" required></select>
+      <select id="draft"></select>
 
       <label for="from">Remitente</label>
-      <select id="from" required></select>
+      <select id="from"></select>
       <p class="hint">Tu cuenta o uno de tus alias de Gmail.</p>
 
       <label for="reply-to">Reply-To (opcional)</label>
       <input id="reply-to" type="text" autocomplete="off" spellcheck="false">
       <p class="hint">Una sola dirección. Dejalo vacío para responder al remitente.</p>
 
+      <label for="campaign-name">Nombre de campaña (opcional)</label>
+      <input id="campaign-name" type="text" autocomplete="off" maxlength="80">
+      <p class="hint">Si lo dejás vacío se genera un ID por envío.</p>
+
       <div class="buttons">
-        <button type="submit" id="save">Guardar</button>
-        <button type="button" id="close">Cerrar</button>
+        <button type="button" id="save" disabled>Guardar</button>
       </div>
-      <p id="message" role="status" aria-live="polite"></p>
-    </form>
+      <p id="config-message" class="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="section-validation">
+      <h2>Validación</h2>
+      <p class="hint">Revisa la campaña sin enviar ni escribir nada.</p>
+      <div class="buttons">
+        <button type="button" id="validate">Validar</button>
+      </div>
+      <p id="validation-message" class="message" role="status" aria-live="polite"></p>
+      <div id="validation-result" class="view" hidden></div>
+      <div id="setup-box" class="confirmation view" hidden>
+        <p class="warning">La pestaña necesita preparar sus columnas antes de enviar.</p>
+        <div id="setup-list"></div>
+        <div class="buttons">
+          <button type="button" id="apply-setup" disabled>Preparar columnas</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="section-test">
+      <h2>Prueba</h2>
+      <label for="test-row">Fila a probar</label>
+      <input id="test-row" type="number" min="2" step="1" inputmode="numeric">
+      <p class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
+      <div class="buttons">
+        <button type="button" id="review-test">Revisar prueba</button>
+      </div>
+      <p id="test-message" class="message" role="status" aria-live="polite"></p>
+      <div id="test-confirmation" class="confirmation" hidden>
+        <div id="test-view" class="view"></div>
+        <div id="test-consent-box" class="view" hidden>
+          <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
+          <ul id="test-consent-rows"></ul>
+        </div>
+        <div class="buttons">
+          <button type="button" id="execute-test" disabled>Enviar prueba</button>
+          <button type="button" id="cancel-test">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="section-send">
+      <h2>Envío</h2>
+      <p class="hint">Envía las filas visibles con Resultado vacío y sin errores.</p>
+      <div class="buttons">
+        <button type="button" id="review-send">Revisar envío</button>
+      </div>
+      <p id="send-message" class="message" role="status" aria-live="polite"></p>
+      <div id="send-confirmation" class="confirmation" hidden>
+        <div id="send-view" class="view"></div>
+        <div id="send-consent-box" class="view" hidden>
+          <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
+          <ul id="send-consent-rows"></ul>
+        </div>
+        <div class="buttons">
+          <button type="button" id="execute-send" disabled>Enviar correos</button>
+          <button type="button" id="cancel-send">Cancelar</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="progress-section" hidden>
+      <h2>Progreso y resultados</h2>
+      <p id="progress-status" class="message" role="status" aria-live="polite"></p>
+      <div class="counters">
+        <span>Total</span><span id="count-total">0</span>
+        <span>Procesadas</span><span id="count-processed">0</span>
+        <span>Aceptadas por Gmail</span><span id="count-sent">0</span>
+        <span>Omitidas</span><span id="count-skipped">0</span>
+        <span>Para revisar</span><span id="count-review">0</span>
+        <span>Pendientes</span><span id="count-pending">0</span>
+      </div>
+      <p class="hint">Una fila aceptada por Gmail puede quedar además para revisar (por ejemplo, si se desplazó).</p>
+      <progress id="progress-bar" max="1" value="0"></progress>
+      <p id="progress-guidance" class="message error" hidden></p>
+      <p id="stopped-reason" class="message error" hidden></p>
+      <div id="summary" class="view"></div>
+      <p id="progress-truncated" class="hint" hidden>Se muestran solo las últimas filas; el resultado final las incluye todas.</p>
+      <table>
+        <thead>
+          <tr><th>Fila</th><th>Destinatario</th><th>Resultado</th><th>Detalle</th></tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+    </section>
+
+    <div class="buttons">
+      <button type="button" id="close">Cerrar</button>
+    </div>
 
     <script>
-      // Todo dato del servidor se inserta como texto (`textContent`,
-      // `new Option`), nunca como HTML.
-      var form = document.getElementById('config-form');
-      var sheetSelect = document.getElementById('sheet');
-      var draftSelect = document.getElementById('draft');
-      var fromSelect = document.getElementById('from');
-      var replyToInput = document.getElementById('reply-to');
-      var saveButton = document.getElementById('save');
-      var closeButton = document.getElementById('close');
-      var messageBox = document.getElementById('message');
+      // Panel único de Mail Merge (plan V2, "Detalle del código > Sidebar").
+      // Reglas: todo dato del servidor se inserta como texto (`textContent`,
+      // `new Option`); una operación de servidor a la vez por sección;
+      // `execute…` se llama una sola vez por token y nunca se reintenta
+      // (D-45); el progreso se sondea con `setTimeout` encadenado, una llamada
+      // por vez, hasta que `execute…` responde o falla (D-29). El servidor
+      // decide siempre: la sidebar solo pinta las vistas que recibe.
+      var MailMergePanel = (function () {
+        var PROGRESS_POLL_MS = 2000;
+        var MAX_TIMER_MS = 2147483647;
+        var GUIDANCE =
+          'No se pudo confirmar el resultado. Revisá la columna Resultado (ENVIANDO / REVISAR) antes de volver a enviar';
+        var WAITING = 'Esperando el inicio del envío…';
 
-      function showMessage(text, kind) {
-        messageBox.textContent = text;
-        messageBox.className = kind || '';
-      }
-
-      function setBusy(busy) {
-        saveButton.disabled = busy;
-        sheetSelect.disabled = busy;
-        draftSelect.disabled = busy;
-        fromSelect.disabled = busy;
-        replyToInput.disabled = busy;
-      }
-
-      // Rellena un select con una opción vacía inicial y preselecciona
-      // `currentValue` si está entre las opciones.
-      function fillSelect(select, items, currentValue) {
-        while (select.firstChild) {
-          select.removeChild(select.firstChild);
+        function byId(id) {
+          return document.getElementById(id);
         }
-        select.add(new Option('Elegí una opción…', ''));
-        var found = false;
-        items.forEach(function (item) {
-          select.add(new Option(item.text, item.value));
-          if (currentValue !== null && currentValue !== undefined && item.value === String(currentValue)) {
-            found = true;
+
+        var el = {
+          sheet: byId('sheet'),
+          draft: byId('draft'),
+          from: byId('from'),
+          replyTo: byId('reply-to'),
+          campaignName: byId('campaign-name'),
+          save: byId('save'),
+          configMessage: byId('config-message'),
+          validate: byId('validate'),
+          validationMessage: byId('validation-message'),
+          validationResult: byId('validation-result'),
+          setupBox: byId('setup-box'),
+          setupList: byId('setup-list'),
+          applySetup: byId('apply-setup'),
+          testRow: byId('test-row'),
+          reviewTest: byId('review-test'),
+          reviewSend: byId('review-send'),
+          progressSection: byId('progress-section'),
+          progressStatus: byId('progress-status'),
+          progressBar: byId('progress-bar'),
+          progressGuidance: byId('progress-guidance'),
+          stoppedReason: byId('stopped-reason'),
+          summary: byId('summary'),
+          truncated: byId('progress-truncated'),
+          resultsBody: byId('results-body'),
+          close: byId('close'),
+          counts: {
+            total: byId('count-total'),
+            processed: byId('count-processed'),
+            sent: byId('count-sent'),
+            skipped: byId('count-skipped'),
+            review: byId('count-review'),
+            pending: byId('count-pending')
           }
-        });
-        select.value = found ? String(currentValue) : '';
-      }
+        };
 
-      function formatDate(text) {
-        var date = new Date(text);
-        return isNaN(date.getTime()) ? String(text || '') : date.toLocaleString();
-      }
+        // Elementos de cada confirmación (prueba y envío).
+        var confirmUi = {
+          test: {
+            message: byId('test-message'),
+            box: byId('test-confirmation'),
+            view: byId('test-view'),
+            consentBox: byId('test-consent-box'),
+            consent: byId('test-consent'),
+            consentText: byId('test-consent-text'),
+            consentRows: byId('test-consent-rows'),
+            execute: byId('execute-test'),
+            cancel: byId('cancel-test')
+          },
+          send: {
+            message: byId('send-message'),
+            box: byId('send-confirmation'),
+            view: byId('send-view'),
+            consentBox: byId('send-consent-box'),
+            consent: byId('send-consent'),
+            consentText: byId('send-consent-text'),
+            consentRows: byId('send-consent-rows'),
+            execute: byId('execute-send'),
+            cancel: byId('cancel-send')
+          }
+        };
 
-      function failureMessage(error) {
-        return (error && error.message) ? error.message : String(error);
-      }
+        // Estado del cliente. `confirmations[kind]` = { token, view, used,
+        // expired, expiryTimer }; `run` = ejecución en curso o terminada.
+        var state = {
+          busy: { config: true, validation: false, test: false, send: false },
+          setupHeaderKey: null,
+          confirmations: { test: null, send: null },
+          run: null
+        };
 
-      function onOptionsLoaded(options) {
-        var current = options.current || {};
-        fillSelect(sheetSelect, options.sheets.map(function (sheet) {
-          return { value: String(sheet.id), text: sheet.name };
-        }), current.sheetId);
-        fillSelect(draftSelect, options.drafts.map(function (draft) {
-          return { value: draft.id, text: (draft.subject || '(sin asunto)') + ' — ' + formatDate(draft.date) };
-        }), current.draftId);
-        fillSelect(fromSelect, options.senders.map(function (sender) {
-          return { value: sender, text: sender };
-        }), current.from);
-        replyToInput.value = current.replyTo || '';
-        setBusy(false);
-        if (options.drafts.length === 0) {
-          showMessage('No hay borradores en tu cuenta de Gmail. Creá uno y volvé a abrir la configuración.', 'error');
-        } else {
-          showMessage('', '');
+        // --- Utilidades de texto y DOM ---------------------------------------
+
+        function asText(value) {
+          return value === null || value === undefined ? '' : String(value);
         }
-      }
 
-      function onFailure(error) {
-        setBusy(false);
-        showMessage(failureMessage(error), 'error');
-      }
-
-      function loadOptions() {
-        setBusy(true);
-        showMessage('Cargando opciones…', '');
-        google.script.run
-          .withSuccessHandler(onOptionsLoaded)
-          .withFailureHandler(onFailure)
-          .getPanelState();
-      }
-
-      form.addEventListener('submit', function (event) {
-        event.preventDefault();
-        if (!sheetSelect.value || !draftSelect.value || !fromSelect.value) {
-          showMessage('Elegí la pestaña, el borrador y el remitente.', 'error');
-          return;
+        function setText(node, value) {
+          node.textContent = asText(value);
         }
-        setBusy(true);
-        showMessage('Guardando…', '');
-        google.script.run
-          .withSuccessHandler(function () {
-            setBusy(false);
-            showMessage('Configuración guardada. Usá "Validar" antes de enviar.', 'ok');
-          })
-          .withFailureHandler(onFailure)
-          .saveConfig({
-            sheetId: sheetSelect.value,
-            draftId: draftSelect.value,
-            from: fromSelect.value,
-            replyTo: replyToInput.value.trim()
+
+        function clear(node) {
+          while (node.firstChild) {
+            node.removeChild(node.firstChild);
+          }
+        }
+
+        function appendLine(container, text, className) {
+          var line = document.createElement('p');
+          line.textContent = asText(text);
+          if (className) {
+            line.className = className;
+          }
+          container.appendChild(line);
+          return line;
+        }
+
+        function appendList(container, items) {
+          var list = document.createElement('ul');
+          items.forEach(function (item) {
+            var entry = document.createElement('li');
+            entry.textContent = asText(item);
+            list.appendChild(entry);
           });
-      });
+          container.appendChild(list);
+          return list;
+        }
 
-      closeButton.addEventListener('click', function () {
-        google.script.host.close();
-      });
+        function showMessage(node, text, kind) {
+          setText(node, text);
+          node.className = 'message' + (kind ? ' ' + kind : '');
+        }
 
-      loadOptions();
+        function failureMessage(error) {
+          return error && error.message ? String(error.message) : asText(error);
+        }
+
+        function errorsText(errors) {
+          return (errors || []).map(asText).join('\n');
+        }
+
+        function list(value) {
+          return value && typeof value.length === 'number' ? value : [];
+        }
+
+        function count(value) {
+          return typeof value === 'number' && isFinite(value) ? value : 0;
+        }
+
+        // Índice de columna 0-based → letra de la hoja (A, B, …, AA).
+        function columnLetter(index) {
+          var n = Number(index) + 1;
+          var letters = '';
+          while (n > 0) {
+            var rest = (n - 1) % 26;
+            letters = String.fromCharCode(65 + rest) + letters;
+            n = Math.floor((n - 1) / 26);
+          }
+          return letters;
+        }
+
+        function rowLine(row) {
+          var names = list(row.attachmentNames).map(asText);
+          return 'Fila ' + asText(row.rowNumber) + ' → ' + asText(row.email) + (names.length > 0 ? ': ' + names.join(', ') : '');
+        }
+
+        function overwriteLine(row) {
+          return 'fila ' + asText(row.rowNumber) + ' (' + list(row.columns).map(asText).join(', ') + ')';
+        }
+
+        function formatDate(text) {
+          var date = new Date(text);
+          return isNaN(date.getTime()) ? asText(text) : date.toLocaleString();
+        }
+
+        // --- Habilitación de controles ---------------------------------------
+
+        function running() {
+          return Boolean(state.run && !state.run.done);
+        }
+
+        function liveConfirmation(kind) {
+          var confirmation = state.confirmations[kind];
+          return Boolean(confirmation && !confirmation.used && !confirmation.expired);
+        }
+
+        function canExecute(kind) {
+          var confirmation = state.confirmations[kind];
+          if (!liveConfirmation(kind) || state.busy[kind] || running()) {
+            return false;
+          }
+          return !confirmation.view.consentRequired || confirmUi[kind].consent.checked === true;
+        }
+
+        function refreshControls() {
+          var isRunning = running();
+          var configBusy = state.busy.config;
+          el.sheet.disabled = configBusy;
+          el.draft.disabled = configBusy;
+          el.from.disabled = configBusy;
+          el.replyTo.disabled = configBusy;
+          el.campaignName.disabled = configBusy;
+          el.save.disabled = configBusy || isRunning;
+
+          el.validate.disabled = state.busy.validation || isRunning;
+          el.applySetup.disabled = state.busy.validation || isRunning || state.setupHeaderKey === null;
+
+          el.testRow.disabled = state.busy.test || isRunning;
+          el.reviewTest.disabled = state.busy.test || isRunning || liveConfirmation('test');
+          el.reviewSend.disabled = state.busy.send || isRunning || liveConfirmation('send');
+
+          ['test', 'send'].forEach(function (kind) {
+            var ui = confirmUi[kind];
+            var confirmation = state.confirmations[kind];
+            ui.execute.disabled = !canExecute(kind);
+            ui.cancel.disabled = !confirmation || confirmation.used || state.busy[kind] || isRunning;
+            ui.consent.disabled = !liveConfirmation(kind) || isRunning;
+          });
+        }
+
+        // --- Campaña ----------------------------------------------------------
+
+        // Rellena un select con una opción vacía inicial y preselecciona
+        // `currentValue` si está entre las opciones.
+        function fillSelect(select, items, currentValue) {
+          clear(select);
+          select.add(new Option('Elegí una opción…', ''));
+          var wanted = currentValue === null || currentValue === undefined ? null : String(currentValue);
+          var found = false;
+          items.forEach(function (item) {
+            select.add(new Option(item.text, item.value));
+            if (wanted !== null && item.value === wanted) {
+              found = true;
+            }
+          });
+          select.value = found ? wanted : '';
+        }
+
+        function onPanelState(panel) {
+          var current = (panel && panel.current) || {};
+          fillSelect(el.sheet, list(panel && panel.sheets).map(function (sheet) {
+            return { value: asText(sheet.id), text: asText(sheet.name) };
+          }), current.sheetId);
+          var drafts = list(panel && panel.drafts);
+          fillSelect(el.draft, drafts.map(function (draft) {
+            return { value: asText(draft.id), text: (asText(draft.subject) || '(sin asunto)') + ' — ' + formatDate(draft.date) };
+          }), current.draftId);
+          fillSelect(el.from, list(panel && panel.senders).map(function (sender) {
+            return { value: asText(sender), text: asText(sender) };
+          }), current.from);
+          el.replyTo.value = asText(current.replyTo);
+          el.campaignName.value = asText(current.campaignName);
+          state.busy.config = false;
+          if (drafts.length === 0) {
+            showMessage(el.configMessage, 'No hay borradores en tu cuenta de Gmail. Creá uno y volvé a abrir el panel.', 'error');
+          } else {
+            showMessage(el.configMessage, '', '');
+          }
+          refreshControls();
+        }
+
+        function loadPanel() {
+          state.busy.config = true;
+          refreshControls();
+          showMessage(el.configMessage, 'Cargando opciones…', '');
+          google.script.run
+            .withSuccessHandler(onPanelState)
+            .withFailureHandler(function (error) {
+              state.busy.config = false;
+              showMessage(el.configMessage, failureMessage(error), 'error');
+              refreshControls();
+            })
+            .getPanelState();
+        }
+
+        function saveConfigForm() {
+          if (state.busy.config || running()) {
+            return;
+          }
+          if (!el.sheet.value || !el.draft.value || !el.from.value) {
+            showMessage(el.configMessage, 'Elegí la pestaña, el borrador y el remitente.', 'error');
+            return;
+          }
+          state.busy.config = true;
+          refreshControls();
+          showMessage(el.configMessage, 'Guardando…', '');
+          google.script.run
+            .withSuccessHandler(function (config) {
+              state.busy.config = false;
+              if (config && config.campaignName !== undefined) {
+                el.campaignName.value = asText(config.campaignName);
+              }
+              showMessage(el.configMessage, 'Configuración guardada. Usá "Validar" antes de enviar.', 'ok');
+              refreshControls();
+            })
+            .withFailureHandler(function (error) {
+              state.busy.config = false;
+              showMessage(el.configMessage, failureMessage(error), 'error');
+              refreshControls();
+            })
+            .saveConfig({
+              sheetId: el.sheet.value,
+              draftId: el.draft.value,
+              from: el.from.value,
+              replyTo: asText(el.replyTo.value).trim(),
+              campaignName: asText(el.campaignName.value).trim()
+            });
+        }
+
+        // --- Validación -------------------------------------------------------
+
+        function renderSetup(setup) {
+          clear(el.setupList);
+          var blocked = list(setup.errors).length > 0;
+          var changes = [];
+          list(setup.renames).forEach(function (rename) {
+            changes.push('Renombrar "' + asText(rename.from) + '" → "' + asText(rename.to) + '" (columna ' + columnLetter(rename.column) + ')');
+          });
+          list(setup.appends).forEach(function (append) {
+            changes.push('Agregar "' + asText(append.name) + '" (columna ' + columnLetter(append.column) + ')');
+          });
+          if (changes.length > 0) {
+            appendLine(el.setupList, 'Cambios en la fila de encabezados (los datos no se mueven):');
+            appendList(el.setupList, changes);
+          }
+          if (blocked) {
+            appendLine(el.setupList, 'No se puede preparar hasta resolver a mano:', 'error');
+            appendList(el.setupList, list(setup.errors));
+          }
+          if (list(setup.blockedRows).length > 0) {
+            appendLine(el.setupList, 'Filas a resolver: ' + list(setup.blockedRows).map(asText).join(', '));
+          }
+          state.setupHeaderKey = blocked ? null : asText(setup.headerKey);
+          el.setupBox.hidden = false;
+        }
+
+        function renderValidation(view) {
+          var box = el.validationResult;
+          clear(box);
+          state.setupHeaderKey = null;
+          el.setupBox.hidden = true;
+          view = view || {};
+
+          var globalErrors = list(view.globalErrors);
+          if (globalErrors.length > 0) {
+            appendLine(box, 'Errores que afectan a toda la campaña:', 'error');
+            appendList(box, globalErrors);
+          }
+          if (view.sheetName) {
+            appendLine(box, 'Pestaña: ' + asText(view.sheetName));
+          }
+          if (view.subject) {
+            appendLine(box, 'Asunto: ' + asText(view.subject));
+          }
+          if (view.from) {
+            appendLine(box, 'Remitente: ' + asText(view.from));
+          }
+          if (view.replyTo) {
+            appendLine(box, 'Reply-To: ' + asText(view.replyTo));
+          }
+          appendLine(
+            box,
+            'Cuota diaria restante de Gmail: ' + (typeof view.quotaRemaining === 'number' ? view.quotaRemaining : 'no disponible')
+          );
+          var counts = view.counts || {};
+          appendLine(
+            box,
+            'Filas válidas: ' + count(counts.valid) + ' · Con errores: ' + count(counts.invalid) + ' · Excluidas: ' + count(counts.excluded)
+          );
+          var excluded = list(view.excludedByReason);
+          if (excluded.length > 0) {
+            appendLine(box, 'Excluidas por motivo:');
+            appendList(box, excluded.map(function (item) {
+              return asText(item.reason) + ': ' + count(item.count);
+            }));
+          }
+          var common = list(view.commonAttachments).map(asText);
+          if (common.length > 0) {
+            appendLine(box, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
+          }
+          var rows = list(view.rows);
+          if (rows.length > 0) {
+            appendLine(box, 'Filas a enviar:');
+            appendList(box, rows.map(rowLine));
+          }
+          if (count(view.moreRows) > 0) {
+            appendLine(box, 'y ' + count(view.moreRows) + ' filas más');
+          }
+          var invalid = list(view.invalidRows);
+          if (invalid.length > 0) {
+            appendLine(box, 'Filas con errores (no se envían):', 'error');
+            appendList(box, invalid.map(function (row) {
+              return 'Fila ' + asText(row.rowNumber) + ': ' + list(row.reasons).map(asText).join('; ');
+            }));
+          }
+          if (count(view.moreInvalid) > 0) {
+            appendLine(box, 'y ' + count(view.moreInvalid) + ' filas más con errores');
+          }
+          var overwrite = list(view.overwriteRows);
+          if (overwrite.length > 0) {
+            appendLine(
+              box,
+              'Aviso: al enviar se reemplazarán valores existentes de Fecha, Campaña o Detalle en estas filas; la confirmación pedirá tu consentimiento:',
+              'warning'
+            );
+            appendList(box, overwrite.map(overwriteLine));
+          }
+          box.hidden = false;
+          if (view.setup && view.setup.needed) {
+            renderSetup(view.setup);
+          }
+          showMessage(
+            el.validationMessage,
+            view.ok ? 'Validación sin errores globales.' : 'La validación encontró problemas.',
+            view.ok ? 'ok' : 'error'
+          );
+        }
+
+        function runValidation() {
+          if (state.busy.validation || running()) {
+            return;
+          }
+          state.busy.validation = true;
+          refreshControls();
+          showMessage(el.validationMessage, 'Validando…', '');
+          google.script.run
+            .withSuccessHandler(function (view) {
+              state.busy.validation = false;
+              renderValidation(view);
+              refreshControls();
+            })
+            .withFailureHandler(function (error) {
+              state.busy.validation = false;
+              showMessage(el.validationMessage, failureMessage(error), 'error');
+              refreshControls();
+            })
+            .validateCampaign();
+        }
+
+        function applySetup() {
+          if (state.busy.validation || running() || state.setupHeaderKey === null) {
+            return;
+          }
+          var headerKey = state.setupHeaderKey;
+          state.busy.validation = true;
+          refreshControls();
+          showMessage(el.validationMessage, 'Preparando columnas…', '');
+          google.script.run
+            .withSuccessHandler(function (result) {
+              state.busy.validation = false;
+              if (result && result.ok) {
+                showMessage(el.validationMessage, 'Columnas preparadas.', 'ok');
+                refreshControls();
+                runValidation();
+                return;
+              }
+              showMessage(el.validationMessage, errorsText(result && result.errors) || 'No se pudieron preparar las columnas.', 'error');
+              refreshControls();
+            })
+            .withFailureHandler(function (error) {
+              state.busy.validation = false;
+              showMessage(el.validationMessage, failureMessage(error), 'error');
+              refreshControls();
+            })
+            .applyColumnSetup(headerKey);
+        }
+
+        // --- Confirmaciones (prueba y envío) ----------------------------------
+
+        function renderConfirmation(kind, view) {
+          var ui = confirmUi[kind];
+          clear(ui.view);
+          appendLine(ui.view, view.warning, 'warning');
+          appendLine(ui.view, 'Campaña: ' + asText(view.campaign));
+          appendLine(ui.view, 'Pestaña: ' + asText(view.sheetName));
+          appendLine(ui.view, 'Asunto: ' + asText(view.subject));
+          appendLine(ui.view, 'Remitente: ' + asText(view.from));
+          if (view.replyTo) {
+            appendLine(ui.view, 'Reply-To: ' + asText(view.replyTo));
+          }
+          if (kind === 'test') {
+            appendLine(ui.view, 'Para: ' + asText(view.to));
+          }
+          appendLine(
+            ui.view,
+            'Filas a enviar: ' + count(view.count) + ' · Con errores (no se envían): ' + count(view.invalidCount) +
+              ' · Excluidas: ' + count(view.excludedCount)
+          );
+          var common = list(view.commonAttachments).map(asText);
+          if (common.length > 0) {
+            appendLine(ui.view, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
+          }
+          appendList(ui.view, list(view.rows).map(rowLine));
+          appendLine(ui.view, 'La confirmación vence: ' + formatDate(view.expiresAtIso));
+
+          ui.consent.checked = false;
+          clear(ui.consentRows);
+          if (view.consentRequired) {
+            setText(ui.consentText, view.consentText);
+            list(view.overwriteRows).forEach(function (row) {
+              var entry = document.createElement('li');
+              entry.textContent = overwriteLine(row);
+              ui.consentRows.appendChild(entry);
+            });
+            ui.consentBox.hidden = false;
+          } else {
+            setText(ui.consentText, '');
+            ui.consentBox.hidden = true;
+          }
+          ui.execute.textContent =
+            kind === 'test' ? 'Enviar prueba' : count(view.count) === 1 ? 'Enviar 1 correo' : 'Enviar ' + count(view.count) + ' correos';
+          ui.box.hidden = false;
+        }
+
+        function clearExpiry(confirmation) {
+          if (confirmation && confirmation.expiryTimer !== null) {
+            clearTimeout(confirmation.expiryTimer);
+            confirmation.expiryTimer = null;
+          }
+        }
+
+        // Quita la confirmación del panel (sin llamar al servidor).
+        function dropConfirmation(kind) {
+          var confirmation = state.confirmations[kind];
+          clearExpiry(confirmation);
+          state.confirmations[kind] = null;
+          var ui = confirmUi[kind];
+          ui.box.hidden = true;
+          ui.consent.checked = false;
+          clear(ui.view);
+        }
+
+        // Comodidad: al vencer `expiresAtIso` el botón se deshabilita; el
+        // servidor rechaza igual una confirmación vencida.
+        function scheduleExpiry(kind, confirmation) {
+          var deadline = Date.parse(asText(confirmation.view.expiresAtIso));
+          var delay = isNaN(deadline) ? 0 : Math.min(Math.max(deadline - Date.now(), 0), MAX_TIMER_MS);
+          confirmation.expiryTimer = setTimeout(function () {
+            confirmation.expiryTimer = null;
+            if (state.confirmations[kind] !== confirmation || confirmation.used) {
+              return;
+            }
+            confirmation.expired = true;
+            showMessage(confirmUi[kind].message, 'La confirmación venció; volvé a revisar.', 'error');
+            refreshControls();
+          }, delay);
+        }
+
+        function review(kind) {
+          if (state.busy[kind] || running() || liveConfirmation(kind)) {
+            return;
+          }
+          var ui = confirmUi[kind];
+          var rowNumber = '';
+          if (kind === 'test') {
+            rowNumber = asText(el.testRow.value).trim();
+            if (rowNumber === '') {
+              showMessage(ui.message, 'Indicá el número de fila a probar (2 o mayor).', 'error');
+              return;
+            }
+          }
+          if (state.confirmations[kind]) {
+            dropConfirmation(kind); // vencida: su entrada en la caché también venció
+          }
+          state.busy[kind] = true;
+          refreshControls();
+          showMessage(ui.message, 'Revisando…', '');
+          var runner = google.script.run
+            .withSuccessHandler(function (response) {
+              state.busy[kind] = false;
+              if (!response || !response.ok || !response.token || !response.view) {
+                showMessage(ui.message, errorsText(response && response.errors) || 'No se pudo preparar la confirmación.', 'error');
+                refreshControls();
+                return;
+              }
+              var confirmation = {
+                token: asText(response.token),
+                view: response.view,
+                used: false,
+                expired: false,
+                expiryTimer: null
+              };
+              state.confirmations[kind] = confirmation;
+              renderConfirmation(kind, response.view);
+              scheduleExpiry(kind, confirmation);
+              showMessage(ui.message, 'Revisá cada fila antes de confirmar.', '');
+              refreshControls();
+            })
+            .withFailureHandler(function (error) {
+              state.busy[kind] = false;
+              showMessage(ui.message, failureMessage(error), 'error');
+              refreshControls();
+            });
+          if (kind === 'test') {
+            runner.prepareTestSend(rowNumber);
+          } else {
+            runner.prepareSendPending();
+          }
+        }
+
+        function cancel(kind) {
+          var confirmation = state.confirmations[kind];
+          if (!confirmation || confirmation.used || state.busy[kind] || running()) {
+            return;
+          }
+          var ui = confirmUi[kind];
+          var token = confirmation.token;
+          dropConfirmation(kind);
+          state.busy[kind] = true;
+          refreshControls();
+          google.script.run
+            .withSuccessHandler(function () {
+              state.busy[kind] = false;
+              showMessage(ui.message, 'Confirmación cancelada; no se envió nada.', '');
+              refreshControls();
+            })
+            .withFailureHandler(function () {
+              state.busy[kind] = false;
+              showMessage(ui.message, 'Confirmación descartada; no se envió nada y vence sola en 10 minutos.', '');
+              refreshControls();
+            })
+            .cancelConfirmation(token);
+        }
+
+        // --- Ejecución y progreso ---------------------------------------------
+
+        function setCounters(counts) {
+          var source = counts || {};
+          ['total', 'processed', 'sent', 'skipped', 'review', 'pending'].forEach(function (key) {
+            setText(el.counts[key], count(source[key]));
+          });
+          el.progressBar.max = count(source.total) > 0 ? count(source.total) : 1;
+          el.progressBar.value = count(source.processed);
+        }
+
+        function renderRows(rows, recipientOf) {
+          clear(el.resultsBody);
+          list(rows).forEach(function (row) {
+            var tr = document.createElement('tr');
+            [asText(row.rowNumber), recipientOf(row), asText(row.result), asText(row.detail)].forEach(function (value) {
+              var td = document.createElement('td');
+              td.textContent = value;
+              tr.appendChild(td);
+            });
+            el.resultsBody.appendChild(tr);
+          });
+        }
+
+        function setStoppedReason(reason) {
+          var text = asText(reason);
+          setText(el.stoppedReason, text === '' ? '' : 'Motivo de corte: ' + text);
+          el.stoppedReason.hidden = text === '';
+        }
+
+        // El progreso en caché no trae direcciones (D-46): el destinatario sale
+        // de la ConfirmationView vigente (en la prueba, `view.to`).
+        function progressRecipient(run) {
+          return function (row) {
+            if (run.kind === 'test') {
+              return asText(run.view.to);
+            }
+            return Object.prototype.hasOwnProperty.call(run.recipients, String(row.rowNumber))
+              ? run.recipients[String(row.rowNumber)]
+              : '';
+          };
+        }
+
+        function startRun(kind, confirmation) {
+          var recipients = {};
+          list(confirmation.view.rows).forEach(function (row) {
+            recipients[String(row.rowNumber)] = asText(row.email);
+          });
+          var run = {
+            kind: kind,
+            token: confirmation.token,
+            view: confirmation.view,
+            recipients: recipients,
+            done: false,
+            pollTimer: null,
+            polling: false
+          };
+          state.run = run;
+          setCounters({ total: count(confirmation.view.count), pending: count(confirmation.view.count) });
+          clear(el.resultsBody);
+          clear(el.summary);
+          setStoppedReason('');
+          el.truncated.hidden = true;
+          el.progressGuidance.hidden = true;
+          setText(el.progressGuidance, '');
+          setText(el.progressStatus, kind === 'test' ? 'Prueba solicitada; esperando al servidor…' : 'Envío solicitado; esperando al servidor…');
+          el.progressSection.hidden = false;
+          return run;
+        }
+
+        function schedulePoll(run) {
+          if (run.done || run.polling || run.pollTimer !== null) {
+            return;
+          }
+          run.pollTimer = setTimeout(function () {
+            run.pollTimer = null;
+            pollProgress(run);
+          }, PROGRESS_POLL_MS);
+        }
+
+        function pollProgress(run) {
+          if (run.done) {
+            return;
+          }
+          run.polling = true;
+          google.script.run
+            .withSuccessHandler(function (response) {
+              run.polling = false;
+              if (run.done) {
+                return;
+              }
+              renderProgress(run, response);
+              schedulePoll(run);
+            })
+            .withFailureHandler(function () {
+              run.polling = false;
+              if (run.done) {
+                return;
+              }
+              schedulePoll(run); // el progreso es informativo: se sigue sondeando
+            })
+            .getSendProgress(run.token);
+        }
+
+        function renderProgress(run, response) {
+          if (!response || !response.found || !response.progress) {
+            setText(el.progressStatus, WAITING);
+            return;
+          }
+          var progress = response.progress;
+          setText(el.progressStatus, progress.state === 'TERMINADO' ? 'El envío terminó; esperando el resultado final…' : 'Enviando…');
+          setCounters(progress.counts);
+          renderRows(progress.rows, progressRecipient(run));
+          el.truncated.hidden = progress.rowsTruncated !== true;
+          setStoppedReason(progress.stoppedReason);
+        }
+
+        function stopRun(run) {
+          run.done = true;
+          if (run.pollTimer !== null) {
+            clearTimeout(run.pollTimer);
+            run.pollTimer = null;
+          }
+        }
+
+        function onRunFinished(run, result) {
+          if (run.done) {
+            return;
+          }
+          stopRun(run);
+          var ui = confirmUi[run.kind];
+          dropConfirmation(run.kind);
+          result = result || {};
+          if (!result.ok) {
+            // Nada se envió (confirmación rechazada, lock no disponible…):
+            // vuelve al estado inicial; enviar exige revisar de nuevo.
+            el.progressSection.hidden = true;
+            var lines = list(result.summaryLines).map(asText);
+            showMessage(ui.message, lines.length > 0 ? lines.join('\n') : asText(result.stoppedReason) || 'No se envió nada.', 'error');
+            refreshControls();
+            return;
+          }
+          setText(el.progressStatus, run.kind === 'test' ? 'Prueba terminada.' : 'Envío terminado.');
+          setCounters(result.counts);
+          renderRows(result.rows, function (row) {
+            return asText(row.recipient);
+          });
+          el.truncated.hidden = true;
+          setStoppedReason(result.stoppedReason);
+          clear(el.summary);
+          list(result.summaryLines).forEach(function (line) {
+            appendLine(el.summary, line);
+          });
+          showMessage(ui.message, 'Terminado; revisá el resultado en "Progreso y resultados".', 'ok');
+          refreshControls();
+        }
+
+        // Falla de transporte: el resultado es incierto. Se conserva el último
+        // progreso conocido, se muestra la guía de D-45 y nunca se reintenta.
+        function onRunFailed(run) {
+          if (run.done) {
+            return;
+          }
+          stopRun(run);
+          dropConfirmation(run.kind);
+          setText(el.progressStatus, 'Sin respuesta del servidor.');
+          setText(el.progressGuidance, GUIDANCE);
+          el.progressGuidance.hidden = false;
+          refreshControls();
+        }
+
+        function execute(kind) {
+          if (!canExecute(kind)) {
+            return;
+          }
+          var confirmation = state.confirmations[kind];
+          confirmation.used = true; // una sola llamada por token (D-45)
+          clearExpiry(confirmation);
+          var overwriteConsent = confirmUi[kind].consent.checked === true;
+          var token = confirmation.token;
+          var run = startRun(kind, confirmation);
+          refreshControls();
+          var runner = google.script.run
+            .withSuccessHandler(function (result) {
+              onRunFinished(run, result);
+            })
+            .withFailureHandler(function () {
+              onRunFailed(run);
+            });
+          if (kind === 'test') {
+            runner.executeTestSend(token, overwriteConsent);
+          } else {
+            runner.executeSendPending(token, overwriteConsent);
+          }
+          schedulePoll(run);
+        }
+
+        // --- Eventos ----------------------------------------------------------
+
+        el.save.addEventListener('click', saveConfigForm);
+        el.validate.addEventListener('click', runValidation);
+        el.applySetup.addEventListener('click', applySetup);
+        el.reviewTest.addEventListener('click', function () {
+          review('test');
+        });
+        el.reviewSend.addEventListener('click', function () {
+          review('send');
+        });
+        ['test', 'send'].forEach(function (kind) {
+          confirmUi[kind].execute.addEventListener('click', function () {
+            execute(kind);
+          });
+          confirmUi[kind].cancel.addEventListener('click', function () {
+            cancel(kind);
+          });
+          confirmUi[kind].consent.addEventListener('change', refreshControls);
+        });
+        el.close.addEventListener('click', function () {
+          google.script.host.close();
+        });
+
+        loadPanel();
+
+        return {
+          loadPanel: loadPanel,
+          saveConfig: saveConfigForm,
+          validate: runValidation,
+          applySetup: applySetup,
+          reviewTest: function () {
+            review('test');
+          },
+          executeTest: function () {
+            execute('test');
+          },
+          cancelTest: function () {
+            cancel('test');
+          },
+          reviewSend: function () {
+            review('send');
+          },
+          executeSend: function () {
+            execute('send');
+          },
+          cancelSend: function () {
+            cancel('send');
+          },
+          refresh: refreshControls
+        };
+      })();
     </script>
   </body>
 </html>

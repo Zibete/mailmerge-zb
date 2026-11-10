@@ -226,12 +226,15 @@ test('D-25: menuOpenPanel abre la sidebar "Sidebar" con el título "Mail Merge" 
   assert.deepEqual(accessed, []);
 });
 
-test('Sidebar: src/Sidebar.html carga con getPanelState() y guarda con saveConfig', () => {
+test('AC-32 / AC-52: src/Sidebar.html usa getPanelState, executeSendPending, getSendProgress, cancelConfirmation, withFailureHandler y new Option', () => {
   const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
 
   assert.ok(html.includes('getPanelState()'));
   assert.equal(html.includes('getConfigOptions'), false);
   assert.ok(html.includes('saveConfig('));
+  assert.ok(html.includes('executeSendPending('));
+  assert.ok(html.includes('getSendProgress('));
+  assert.ok(html.includes('cancelConfirmation('));
   assert.ok(html.includes('withFailureHandler'));
   assert.ok(html.includes('new Option('));
 });
