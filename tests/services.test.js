@@ -107,6 +107,7 @@ function createGoogleFakes(options = {}) {
       getName: () => 'Alpha Letter',
       getMimeType: () => 'application/vnd.google-apps.document',
       getSize: () => 0,
+      getLastUpdated: () => new Date('2026-11-01T00:00:00.000Z'),
       isTrashed: () => false,
       getAs(mime) {
         log.push(['getAs', mime]);
@@ -122,6 +123,7 @@ function createGoogleFakes(options = {}) {
       getName: () => 'alpha-notice.pdf',
       getMimeType: () => 'application/pdf',
       getSize: () => 1000,
+      getLastUpdated: () => new Date('2026-11-01T00:00:00.000Z'),
       isTrashed: () => false,
       getAs(mime) {
         log.push(['getAs', mime]);
@@ -191,7 +193,9 @@ function createGoogleFakes(options = {}) {
       Charset: { UTF_8: 'UTF_8_CHARSET' },
       computeDigest(algorithm, text, charset) {
         log.push(['computeDigest', algorithm, text, charset]);
-        return Array.from(nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest()).map((b) =>
+        return Array.from(nodeCrypto.createHash('sha256').update(
+          Array.isArray(text) ? Buffer.from(text.map((n) => n & 0xff)) : Buffer.from(String(text), 'utf8')
+        ).digest()).map((b) =>
           b > 127 ? b - 256 : b
         );
       },
@@ -493,6 +497,7 @@ test('AC-08: drive.getAttachment exporta un nativo con getAs(application/pdf) y 
     mimeType: 'application/vnd.google-apps.document',
     size: 0,
     trashed: false,
+    modifiedAt: '2026-11-01T00:00:00.000Z',
   });
 
   const attachment = deps.drive.getAttachment(info);
@@ -565,4 +570,21 @@ test('quota, session, aliases, clock e ids usan los servicios de Google', () => 
   assert.deepEqual(plain(deps.gmail.getAliases()), [ALIAS_EMAIL]);
   assert.equal(typeof deps.clock.now(), 'number');
   assert.equal(deps.ids.newCampaignId(), '0123abcd');
+});
+
+
+test('P0-3: sha256HexBytes calcula sobre bytes y no sobre su representación textual', () => {
+  const { deps, google } = setup();
+  const bytes = [0, 128, 255, 42];
+  const expected = nodeCrypto.createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+  assert.equal(deps.crypto.sha256HexBytes(bytes), expected);
+  assert.deepEqual(google.log.filter((call) => call[0] === 'computeDigest').pop(),
+    ['computeDigest', 'SHA_256_ALG', bytes, undefined]);
+});
+
+test('P0-1: isRowVisible relee la visibilidad normal antes de Gmail', () => {
+  const { deps } = setup();
+  assert.equal(deps.sheets.isRowVisible(101, 2), true);
+  assert.equal(deps.sheets.isRowVisible(101, 3), false);
+  assert.equal(deps.sheets.isRowVisible(101, 4), false);
 });

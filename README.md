@@ -7,7 +7,7 @@ Herramienta pequeña de **combinación de correspondencia** en **Google Apps Scr
 | Aspecto | Estado |
 |---|---|
 | Implementación de V2 | **Completada** según `plans/2026-11-09_mail-merge-v2.md`, en commits locales (sobre la V1 de `plans/2026-11-08_mail-merge-v1.md`) |
-| Tests offline (lógica y adaptadores simulados) | **311/311 aprobados** en la verificación de cierre de la V2; ejecutar `node --test` para el estado actual |
+| Tests offline (lógica y adaptadores simulados) | **322/322 aprobados** tras las correcciones de seguridad (puntos 1–3); ejecutar `node --test` para el estado actual |
 | Integración con Apps Script, Gmail y Drive | **`PENDING LIVE VALIDATION`** |
 | Instalación, OAuth y envíos reales | **No realizados** |
 
@@ -23,7 +23,7 @@ Todo se maneja desde un **panel lateral**: menú **Mail Merge → Abrir Mail Mer
 - **Validar sin enviar:** destinatarios, marcadores, adjuntos, tamaños, cuota, resultados y filas ocultas o filtradas, con la lista de todas las filas a enviar (destinatario y nombres de adjuntos, sin URLs).
 - **Preparar columnas:** agrega las columnas gestionadas que falten y migra una hoja de la V1 (`Mail Merge Status` → `Resultado`, `Scheduled Date` → `Fecha`) sin mover datos, o se bloquea si eso pondría en riesgo datos del operador.
 - **Enviar una prueba:** el mensaje de una fila a la cuenta del operador, con asunto `[PRUEBA]`. La fila queda con `Resultado = Email Sent`: para enviarle el correo al destinatario real hay que borrar ese resultado a mano.
-- **Enviar pendientes:** confirmación explícita en el panel (de un solo uso y con vencimiento), consentimiento cuando se reemplazan valores de `Fecha`, `Campaña` o `Detalle`, lock contra ejecuciones simultáneas, revalidación de cada fila, progreso en vivo y resultado por fila, sin reintentos automáticos ante resultados dudosos.
+- **Enviar pendientes:** confirmación explícita en el panel (de un solo uso y con vencimiento), reconocimiento obligatorio de que las vistas de filtro no excluyen destinatarios, consentimiento cuando se reemplazan valores de `Fecha`, `Campaña` o `Detalle`, lock contra ejecuciones simultáneas, revalidación de filas y adjuntos, progreso en vivo y resultado por fila, sin reintentos automáticos ante resultados dudosos.
 
 ## Hoja y estados
 
@@ -37,7 +37,7 @@ La fila 1 contiene los encabezados. Se respetan los literales `Email Address` (o
 | `ENVIANDO` | Resultado incierto: revisar manualmente |
 | `REVISAR` | Requiere conciliación manual antes de cualquier reintento |
 
-Las filas ocultas o filtradas y las filas con cualquier `Resultado` no vacío no se envían. La herramienta no programa campañas, no rastrea aperturas ni reenvía resultados dudosos. El uso detallado, la conciliación, el envío por tandas y los límites configurables están en [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+Las filas ocultas manualmente o mediante **filtros normales** y las filas con cualquier `Resultado` no vacío no se envían. **Las vistas de filtro no restringen los destinatarios:** hay que revisar la lista completa y aceptar esa limitación para habilitar el envío real. La herramienta no programa campañas, no rastrea aperturas ni reenvía resultados dudosos. El uso detallado, la conciliación, el envío por tandas y los límites configurables están en [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 ## Estructura
 

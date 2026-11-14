@@ -58,8 +58,8 @@ function prepareSendPending() {
   return prepareSendPending_(createServices_());
 }
 
-function executeSendPending(token, overwriteConsent) {
-  return executeSendPending_(createServices_(), token, overwriteConsent);
+function executeSendPending(token, overwriteConsent, filterAcknowledged) {
+  return executeSendPending_(createServices_(), token, overwriteConsent, filterAcknowledged);
 }
 
 function getSendProgress(token) {
@@ -207,8 +207,8 @@ function prepareSendPending_(deps) {
 }
 
 // Ejecuta el envío confirmado; el consentimiento pasa sin convertir (D-47).
-function executeSendPending_(deps, token, overwriteConsent) {
-  return executeConfirmed_(deps, token, 'send', overwriteConsent);
+function executeSendPending_(deps, token, overwriteConsent, filterAcknowledged) {
+  return executeConfirmed_(deps, token, 'send', overwriteConsent, filterAcknowledged);
 }
 
 // Progreso publicado del envío (D-29). Solo lee la caché, sin lock.

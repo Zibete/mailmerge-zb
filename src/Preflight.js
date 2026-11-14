@@ -125,8 +125,9 @@ function validateSender_(deps, config) {
 function checkRowAttachments_(deps, values, headers, commonAttachments) {
   const errors = [];
   const names = [];
+  const versions = [];
   if (headers.columns.attachments === MISSING_COLUMN) {
-    return { errors: errors, names: names };
+    return { errors: errors, names: names, key: '[]' };
   }
   const parsed = parseDriveLinks_(values[headers.columns.attachments]);
   parsed.errors.forEach(function (error) {
@@ -149,6 +150,11 @@ function checkRowAttachments_(deps, values, headers, commonAttachments) {
       errors.push('Adjunto n.º ' + position + ': ' + classified.error);
       return;
     }
+    if (typeof info.modifiedAt !== 'string' || info.modifiedAt === '') {
+      errors.push('No se pudo verificar la versión del archivo adjunto n.º ' + position);
+      return;
+    }
+    versions.push([info.id, info.name, info.mimeType, info.size, info.modifiedAt]);
     names.push(String(info.name));
     // El tamaño de un nativo se conoce recién al exportarlo; se controla en
     // `buildMessage_` antes del claim.
@@ -160,7 +166,13 @@ function checkRowAttachments_(deps, values, headers, commonAttachments) {
   if (!sizeCheck.ok) {
     errors.push(sizeCheck.error);
   }
-  return { errors: errors, names: names };
+  return { errors: errors, names: names, key: JSON.stringify(versions) };
+}
+
+// La identidad confirmada combina contenido de fila y versión de adjuntos
+// sin duplicar las huellas en la caché (máximo 500 filas).
+function confirmedRowKey_(row) {
+  return JSON.stringify([row.key, row.attachmentKey]);
 }
 
 function isCompleteConfig_(config) {
@@ -260,13 +272,29 @@ function buildPreflight_(deps, config) {
   });
 
   if (report.templateData && report.headers) {
+    // El nombre y el tamaño no identifican un adjunto: dos blobs distintos
+    // pueden tener exactamente los mismos metadatos.
+    const blobDigest = function (blob) {
+      return deps.crypto.sha256HexBytes(blob.getBytes());
+    };
+    const attachments = [];
+    const inlineImages = [];
+    try {
+      (report.templateData.attachments || []).forEach(function (attachment) {
+        attachments.push([attachment.name, attachment.size, attachment.mimeType, blobDigest(attachment.blob)]);
+      });
+      (report.templateData.inlineImages || []).forEach(function (image) {
+        inlineImages.push([image.name, blobDigest(image.blob)]);
+      });
+    } catch (e) {
+      report.globalErrors.push('No se pudo verificar el contenido de los adjuntos o imágenes del borrador');
+    }
     report.templateKey = JSON.stringify({
       subject: report.templateData.subject,
       plainBody: report.templateData.plainBody,
       htmlBody: report.templateData.htmlBody,
-      attachments: (report.templateData.attachments || []).map(function (attachment) {
-        return [attachment.name, attachment.size];
-      }),
+      attachments: attachments,
+      inlineImages: inlineImages,
       inlineCids: inlineCids,
       headers: { columns: report.headers.columns, byName: report.headers.byName },
       from: report.from,
@@ -294,6 +322,7 @@ function buildPreflight_(deps, config) {
         rowNumber: row.rowNumber,
         values: row.values,
         key: rowKey_(row.values, report.headers.columns),
+        attachmentKey: attachments.key,
         email: rowCheck.email,
         attachmentNames: attachments.names,
       });

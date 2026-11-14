@@ -109,6 +109,8 @@ function isBlankRow_(values) {
 const SEND_TEXT_ = {
   LOCKED: 'Hay otra ejecución en curso; reintentá en unos minutos',
   CHANGED: 'Cambió después de la confirmación',
+  FILTER_ACK: 'Antes de enviar, confirmá que revisaste los destinatarios y que las vistas de filtro no excluyen filas',
+  ATTACHMENT_CHANGED: 'Los adjuntos de Drive cambiaron después de la confirmación; la fila no se envió',
   TEMPLATE_CHANGED:
     'La plantilla, los encabezados, el remitente o el Reply-To cambiaron después de la confirmación; ' +
     'no se envió nada. Volvé a validar y confirmar',
@@ -146,6 +148,16 @@ function readRowSafe_(deps, sheetId, rowNumber, width) {
     return deps.sheets.readRow(sheetId, rowNumber, width);
   } catch (e) {
     return null;
+  }
+}
+
+// La lectura de valores no informa si la fila fue ocultada durante la ejecución.
+// Fallamos cerrado cuando no se puede comprobar la visibilidad.
+function isRowVisibleSafe_(deps, sheetId, rowNumber) {
+  try {
+    return deps.sheets.isRowVisible(sheetId, rowNumber) === true;
+  } catch (e) {
+    return false;
   }
 }
 
@@ -226,7 +238,7 @@ function sameConfirmedConfig_(config, confirmed) {
  * Un `kind` distinto de `'send'` y `'test'` devuelve `ok: false` sin lock ni
  * caché.
  */
-function executeConfirmed_(deps, token, kind, overwriteConsent) {
+function executeConfirmed_(deps, token, kind, overwriteConsent, filterAcknowledged) {
   const startedAt = deps.clock.now();
   const result = {
     ok: false,
@@ -270,7 +282,7 @@ function executeConfirmed_(deps, token, kind, overwriteConsent) {
   }
 
   try {
-    runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, result);
+    runConfirmedRows_(deps, token, kind, overwriteConsent, filterAcknowledged, startedAt, result);
   } finally {
     deps.lock.release();
   }
@@ -279,7 +291,7 @@ function executeConfirmed_(deps, token, kind, overwriteConsent) {
 
 // Cuerpo de `executeConfirmed_`, con el lock tomado. Completa `result` en el
 // lugar.
-function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, result) {
+function runConfirmedRows_(deps, token, kind, overwriteConsent, filterAcknowledged, startedAt, result) {
   const taken = takeConfirmation_(deps, token, kind);
   if (!taken.ok) {
     result.stoppedReason = taken.error;
@@ -287,6 +299,10 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
   }
   const snapshot = taken.snapshot;
   result.campaign = snapshot.campaign;
+  if (kind === 'send' && filterAcknowledged !== true) {
+    result.stoppedReason = SEND_TEXT_.FILTER_ACK;
+    return;
+  }
   if (snapshot.overwriteRows.length > 0 && overwriteConsent !== true) {
     result.stoppedReason = SEND_TEXT_.CONSENT;
     return;
@@ -382,7 +398,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
 
     // La fila tiene que seguir válida y con el mismo digest (AC-23 a AC-25).
     const row = current[rowNumber];
-    if (!row || deps.crypto.sha256Hex(row.key) !== digest) {
+    if (!row || deps.crypto.sha256Hex(confirmedRowKey_(row)) !== digest) {
       record(rowNumber, recipientOf(null), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
       continue;
     }
@@ -390,7 +406,7 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
     // Relectura (ediciones durante el recorrido) y huella de metadatos
     // (D-48), antes de armar el mensaje y del claim; sin escrituras.
     const live = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
-    if (!live || deps.crypto.sha256Hex(rowKey_(live, columns)) !== digest) {
+    if (!live || rowKey_(live, columns) !== row.key || !isRowVisibleSafe_(deps, sheetId, rowNumber)) {
       record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
       continue;
     }
@@ -411,6 +427,25 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
       built.message.to = snapshot.testTo;
       built.message.subject = TEST_SUBJECT_PREFIX + built.message.subject;
     }
+    // Un adjunto puede tardar en descargarse; la fila pudo moverse mientras
+    // se obtenían los blobs. Releemos antes de escribir nada, y volvemos a
+    // comprobar la versión de Drive que aprobó la confirmación.
+    const beforeClaim = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
+    if (!beforeClaim || rowKey_(beforeClaim, columns) !== row.key ||
+        !isRowVisibleSafe_(deps, sheetId, rowNumber)) {
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.CHANGED);
+      continue;
+    }
+    if (deps.crypto.sha256Hex(metaKey_(beforeClaim, columns)) !== metaDigest) {
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.META_CHANGED);
+      continue;
+    }
+    const attachmentsNow = checkRowAttachments_(deps, beforeClaim, report.headers, report.templateData.attachments || []);
+    if (attachmentsNow.errors.length > 0 || attachmentsNow.key !== row.attachmentKey) {
+      record(rowNumber, recipientOf(row), SEND_LOG_RESULT_.SKIPPED, SEND_TEXT_.ATTACHMENT_CHANGED);
+      continue;
+    }
+
     const recipient = built.message.to;
     const successDetail = isTest ? sendDetailText_(testSentDetail_(snapshot.testTo)) : SEND_TEXT_.ACCEPTED;
 
@@ -431,6 +466,20 @@ function runConfirmedRows_(deps, token, kind, overwriteConsent, startedAt, resul
           ' de la fila antes de reintentar'
       );
       result.stoppedReason = 'No se pudo escribir ' + HEADERS.RESULT + ' de la fila ' + rowNumber + '; el envío se detuvo';
+      break;
+    }
+
+    // Sheets no da compare-and-set: si otra persona reordenó la hoja entre
+    // la lectura y el claim, detener antes de Gmail. El claim puede quedar
+    // en otra fila y requiere conciliación manual, nunca limpieza automática.
+    const claimed = readRowSafe_(deps, sheetId, rowNumber, row.values.length);
+    const expectedClaim = row.values.slice();
+    expectedClaim[columns.result] = STATUS.SENDING;
+    if (!claimed || rowKey_(claimed, columns) !== rowKey_(expectedClaim, columns) ||
+        !isRowVisibleSafe_(deps, sheetId, rowNumber)) {
+      record(rowNumber, recipient, STATUS.REVIEW,
+        'La fila cambió durante el marcado ENVIANDO; no se llamó a Gmail. Revisá Resultado y conciliá antes de reintentar');
+      result.stoppedReason = 'La identidad o visibilidad de la fila cambió durante el marcado; ejecución detenida';
       break;
     }
 

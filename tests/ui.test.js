@@ -412,7 +412,7 @@ test('AC-51 / D-32: preparar columnas, la prueba y el envío dejan intacta la pe
   assert.equal(plain(ctx.executeTestSend(trial.token)).ok, true);
   const prep = plain(ctx.prepareSendPending());
   assert.equal(prep.ok, true, JSON.stringify(prep.errors));
-  const result = plain(ctx.executeSendPending(prep.token, true));
+  const result = plain(ctx.executeSendPending(prep.token, true, true));
   assert.equal(result.ok, true, JSON.stringify(result));
 
   assert.equal(fake.calls.sent.length, 3);
@@ -437,8 +437,8 @@ test('D-44: el resultado de cada función pública …_ es igual a su ida y vuel
   const prep = ctx.prepareSendPending_(fake.deps);
   results.prepareSendPending_ = prep;
   results.getSendProgressMissing = ctx.getSendProgress_(fake.deps, prep.token);
-  results.executeSendPending_ = ctx.executeSendPending_(fake.deps, prep.token);
-  results.executeSendPendingRejected = ctx.executeSendPending_(fake.deps, prep.token);
+  results.executeSendPending_ = ctx.executeSendPending_(fake.deps, prep.token, undefined, true);
+  results.executeSendPendingRejected = ctx.executeSendPending_(fake.deps, prep.token, undefined, true);
   results.getSendProgress_ = ctx.getSendProgress_(fake.deps, prep.token);
   results.cancelConfirmation = ctx.cancelConfirmation(prep.token);
 
@@ -478,7 +478,7 @@ test('envoltorios: prepareSendPending() + executeSendPending(token) envían los 
   assert.equal(prep.view.count, 3);
   assert.equal(fake.calls.sent.length, 0);
 
-  const result = plain(ctx.executeSendPending(prep.token));
+  const result = plain(ctx.executeSendPending(prep.token, undefined, true));
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.kind, 'send');
@@ -519,7 +519,7 @@ test('envoltorios: cancelConfirmation(token) borra la confirmación y un execute
   assert.deepEqual(plain(ctx.cancelConfirmation(prep.token)), { ok: true });
   assert.equal(Object.prototype.hasOwnProperty.call(fixture.cache, CONF_PREFIX + prep.token), false);
 
-  const result = plain(ctx.executeSendPending(prep.token));
+  const result = plain(ctx.executeSendPending(prep.token, undefined, true));
   assert.equal(result.ok, false);
   assert.equal(result.stoppedReason, INVALID_MESSAGE);
   assert.equal(fake.calls.sent.length, 0);
@@ -562,19 +562,19 @@ test('D-47: executeSendPending pasa el consentimiento sin alterarlo (solo true v
 
   const first = plain(ctx.prepareSendPending());
   assert.equal(first.view.consentRequired, true);
-  const rejected = plain(ctx.executeSendPending(first.token));
+  const rejected = plain(ctx.executeSendPending(first.token, undefined, true));
   assert.equal(rejected.ok, false);
   assert.equal(rejected.stoppedReason, CONSENT_MESSAGE);
 
   const second = plain(ctx.prepareSendPending());
-  const coerced = plain(ctx.executeSendPending(second.token, 'true'));
+  const coerced = plain(ctx.executeSendPending(second.token, 'true', true));
   assert.equal(coerced.ok, false);
   assert.equal(coerced.stoppedReason, CONSENT_MESSAGE);
   assert.equal(fake.calls.sent.length, 0);
   assert.equal(fake.calls.cellWrites.length, 0);
 
   const third = plain(ctx.prepareSendPending());
-  const result = plain(ctx.executeSendPending(third.token, true));
+  const result = plain(ctx.executeSendPending(third.token, true, true));
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(
     fake.calls.sent.map((message) => message.to),

@@ -106,7 +106,7 @@ test('AC-34 / D-26 / D-27: prepareConfirmation_ send guarda un snapshot mínimo 
     snapshot.rows,
     [2, 3, 4].map((rowNumber) => [
       rowNumber,
-      sha256(ctx.rowKey_(values[rowNumber - 1], columns)),
+      sha256(ctx.confirmedRowKey_(report.valid.find((row) => row.rowNumber === rowNumber))),
       sha256(ctx.metaKey_(values[rowNumber - 1], columns)),
     ])
   );

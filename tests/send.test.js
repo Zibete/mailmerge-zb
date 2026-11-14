@@ -44,7 +44,7 @@ function runSend(ctx, fake, between, overwriteConsent) {
     between(prep);
   }
   const start = fake.calls.sequence.length;
-  const raw = ctx.executeConfirmed_(fake.deps, prep.token, 'send', overwriteConsent);
+  const raw = ctx.executeConfirmed_(fake.deps, prep.token, 'send', overwriteConsent, true);
   assertJsonPlain(raw);
   return { prep, result: plain(raw), start };
 }
@@ -274,7 +274,7 @@ test('AC-18: sin lock no envía ni escribe, la confirmación sigue en la caché 
   assert.ok(Object.prototype.hasOwnProperty.call(fixture.cache, CONF_PREFIX + prep.token));
 
   const later = createFakeDeps(fixture);
-  const second = plain(ctx.executeConfirmed_(later.deps, prep.token, 'send'));
+  const second = plain(ctx.executeConfirmed_(later.deps, prep.token, 'send', undefined, true));
   assert.equal(second.ok, true);
   assert.deepEqual(sentTo(later), [EMAILS[2], EMAILS[3], EMAILS[4]]);
 });
@@ -286,8 +286,8 @@ test('AC-18: dos ejecuciones secuenciales con tokens distintos envían un solo c
   const second = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
   assert.notEqual(first.token, second.token);
 
-  const resultA = plain(ctx.executeConfirmed_(fake.deps, first.token, 'send'));
-  const resultB = plain(ctx.executeConfirmed_(fake.deps, second.token, 'send'));
+  const resultA = plain(ctx.executeConfirmed_(fake.deps, first.token, 'send', undefined, true));
+  const resultB = plain(ctx.executeConfirmed_(fake.deps, second.token, 'send', undefined, true));
 
   assert.equal(resultA.counts.sent, 3);
   assert.equal(resultB.counts.sent, 0);
@@ -407,7 +407,7 @@ test('D-30: preparar en t0 y ejecutar en t0 + 5 min (dentro del vencimiento) env
   const { ctx, fake } = setup();
   const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
   fake.setNow(DEFAULT_NOW + 5 * 60 * 1000);
-  const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send'));
+  const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', undefined, true));
 
   assert.equal(result.ok, true);
   assert.equal(result.counts.sent, 3);
@@ -520,7 +520,7 @@ test('AC-25: una re-ejecución después de un envío exitoso no duplica', () => 
 
   // Reutilizar la confirmación vieja tampoco duplica.
   const stale = createFakeDeps(fixture);
-  const staleResult = plain(ctx.executeConfirmed_(stale.deps, firstPrep.token, 'send'));
+  const staleResult = plain(ctx.executeConfirmed_(stale.deps, firstPrep.token, 'send', undefined, true));
   assertNothingSent(stale, staleResult, INVALID_MESSAGE);
 });
 
@@ -578,7 +578,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
   // Formato inválido: sin lock ni caché.
   for (const token of [undefined, 'abc']) {
     const { ctx, fake } = setup();
-    const result = plain(ctx.executeConfirmed_(fake.deps, token, 'send'));
+    const result = plain(ctx.executeConfirmed_(fake.deps, token, 'send', undefined, true));
     assertNothingSent(fake, result, INVALID_MESSAGE);
     assert.equal(fake.calls.lockCalls.length, 0);
     assert.equal(fake.calls.cacheGets.length, 0);
@@ -587,7 +587,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
   // UUID desconocido.
   {
     const { ctx, fake } = setup();
-    const result = plain(ctx.executeConfirmed_(fake.deps, UNKNOWN_TOKEN, 'send'));
+    const result = plain(ctx.executeConfirmed_(fake.deps, UNKNOWN_TOKEN, 'send', undefined, true));
     assertNothingSent(fake, result, INVALID_MESSAGE);
     assert.deepEqual(plain(fake.calls.lockCalls), [{ op: 'tryLock', ms: 10000 }, { op: 'release' }]);
   }
@@ -618,7 +618,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
     const { ctx, fake } = setup();
     const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
     item.between(fake, prep.token);
-    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send'));
+    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', undefined, true));
     assertNothingSent(fake, result, item.message);
   }
 
@@ -627,7 +627,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
     const { ctx, fake } = setup();
     const prep = plain(ctx.prepareConfirmation_(fake.deps, 'test', 2));
     assert.equal(prep.ok, true);
-    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send'));
+    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', undefined, true));
     assertNothingSent(fake, result, WRONG_KIND_MESSAGE);
   }
 
@@ -635,7 +635,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
   for (const kind of ['test', 'otro']) {
     const { ctx, fake } = setup();
     const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
-    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, kind));
+    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, kind, undefined, true));
     assertNothingSent(fake, result);
   }
 
@@ -644,7 +644,7 @@ test('AC-35: executeConfirmed_ con token inválido, desconocido, vencido, desalo
     const { ctx, fixture, fake } = setup();
     const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
     const other = createFakeDeps(fixture, { userEmail: 'other@example.test' });
-    const result = plain(ctx.executeConfirmed_(other.deps, prep.token, 'send'));
+    const result = plain(ctx.executeConfirmed_(other.deps, prep.token, 'send', undefined, true));
     assertNothingSent(other, result, WRONG_USER_MESSAGE);
   }
 });
@@ -659,7 +659,7 @@ test('AC-36 / D-28: el mismo token dos veces → la segunda no envía; el consum
   const firstWrite = sequence.findIndex((step) => step.type === 'writeCells');
   assert.ok(removeIndex !== -1 && removeIndex < firstWrite);
 
-  const again = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send'));
+  const again = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', undefined, true));
   assert.equal(again.ok, false);
   assert.equal(again.stoppedReason, INVALID_MESSAGE);
   assert.equal(fake.calls.sent.length, 3);
@@ -711,7 +711,7 @@ test('AC-54 / D-47: con metadatos a reemplazar, sin overwriteConsent === true no
     assertNothingSent(fake, result, CONSENT_MESSAGE);
     assert.equal(fake.getCell(3, 'Campaña'), 'Anterior');
     // El token ya no sirve, ni siquiera con el consentimiento.
-    const again = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', true));
+    const again = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', true, true));
     assertNothingSent(fake, again, INVALID_MESSAGE);
   }
 });
@@ -900,11 +900,11 @@ test('AC-38 / D-29: progreso inicial, uno por fila y final TERMINADO que coincid
 
 test('AC-38 / D-29: un rechazo previo (token, lock, consentimiento, configuración o plantilla) no publica progreso', () => {
   const cases = {
-    'token inválido': (ctx, fake) => plain(ctx.executeConfirmed_(fake.deps, 'abc', 'send')),
+    'token inválido': (ctx, fake) => plain(ctx.executeConfirmed_(fake.deps, 'abc', 'send', undefined, true)),
     'sin lock': (ctx, fake) => {
       const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
       const locked = createFakeDeps(fake.fixture, { lockAvailable: false });
-      const result = plain(ctx.executeConfirmed_(locked.deps, prep.token, 'send'));
+      const result = plain(ctx.executeConfirmed_(locked.deps, prep.token, 'send', undefined, true));
       assert.equal(progressPuts(locked).length, 0);
       return result;
     },

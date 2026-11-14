@@ -121,18 +121,23 @@ Para repetir una prueba sobre la misma fila, también hay que vaciar antes su `R
 
 1. En la sección **Envío**, elegí `Revisar envío`. El servidor valida todo de nuevo. Si no hay filas para enviar (`No hay correos para enviar`), si hay errores que afectan a toda la campaña o si hay más de 500 filas, no se prepara nada.
 2. La confirmación muestra campaña (nombre o ID generado), pestaña, asunto, remitente, Reply-To, cantidad de correos, los adjuntos comunes, **todas** las filas a enviar con destinatario y adjuntos, la cantidad de filas inválidas y excluidas, la hora en que vence la confirmación (10 minutos) y la advertencia `Se enviarán N correos reales. Esta acción no se puede deshacer.`
-3. Si alguna fila a enviar ya tiene valores en `Fecha`, `Campaña` o `Detalle`, aparece la casilla de consentimiento y `Enviar N correos` queda deshabilitado hasta marcarla.
-4. Un solo clic en `Enviar N correos` envía; el botón se deshabilita desde el primer clic y el panel no vuelve a llamar al servidor por su cuenta (D-45). `Cancelar` descarta la confirmación sin enviar nada. Pasados los 10 minutos el botón se deshabilita y hay que volver a `Revisar envío`.
+3. Es obligatorio marcar **«Revisé todos los destinatarios listados»**. Las vistas de filtro de Sheets **no excluyen filas**: el programa solo detecta las ocultas manualmente y las ocultas por filtros normales. Para seleccionar un subconjunto, usá **Datos → Crear un filtro** o `Resultado = SKIP`; verificá la lista completa antes de marcar la casilla. También se exige este reconocimiento en el servidor, no solo en el panel.
+4. Si alguna fila a enviar ya tiene valores en `Fecha`, `Campaña` o `Detalle`, aparece otra casilla de consentimiento y `Enviar N correos` queda deshabilitado hasta marcarla.
+5. Un solo clic en `Enviar N correos` envía; el botón se deshabilita desde el primer clic y el panel no vuelve a llamar al servidor por su cuenta (D-45). `Cancelar` descarta la confirmación sin enviar nada. Pasados los 10 minutos el botón se deshabilita y hay que volver a `Revisar envío`.
 
 **Revisión antes de confirmar (D-42).** Cualquier persona con permiso de edición sobre la hoja puede cambiar destinatarios y enlaces. Antes de confirmar, verificá en el panel que cada dirección sea la correcta y que los archivos listados sean los que corresponden a esa persona. El panel lista todas las filas (hasta 500); desplazate hasta el final antes de confirmar.
 
 Al enviar, el servidor vuelve a leer todo desde cero:
 
+- si cambió el contenido de un adjunto o una imagen inline del borrador, aun conservando nombre y tamaño, **cancela todo** sin enviar nada;
+- si se modificó algún archivo de Drive vinculado a una fila desde la confirmación, **omite esa fila** y sigue con las demás; se compara la fecha de última modificación además de ID, nombre, tipo y tamaño (no se calcula una huella del contenido de Drive);
 - si cambiaron la plantilla, los encabezados, el remitente o el Reply-To, **cancela todo** sin enviar nada (D-15);
 - si cambió la configuración guardada (pestaña, borrador, remitente, Reply-To o nombre de campaña, por ejemplo desde otra pestaña del navegador), **cancela todo** sin enviar nada (D-43);
 - si cambió una fila (destinatario, enlaces, `Resultado` o cualquier otro valor), **omite esa fila** como `Cambió después de la confirmación` y sigue con las demás;
 - si cambiaron `Fecha`, `Campaña` o `Detalle` de una fila después de confirmar, **omite esa fila** sin escribir nada en ella (ver D-48 abajo) y sigue con las demás;
 - si otra persona está enviando o preparando columnas en la misma hoja, espera hasta 10 segundos; si no puede tomar el turno, termina con `Hay otra ejecución en curso; reintentá en unos minutos`.
+
+**Cambios durante el envío:** después de descargar los adjuntos, el motor relee la fila y vuelve a comprobar su identidad y visibilidad antes de marcar `ENVIANDO`. Una segunda comprobación posterior al marcado y anterior a Gmail impide enviar si detecta que se movió u ocultó. **No es una transacción atómica:** si se reordena la hoja durante el marcado, `ENVIANDO` puede quedar en otra fila. En ese caso la ejecución se detiene **sin llamar a Gmail para esa fila** y exige conciliación manual de la hoja; no borres el estado a ciegas. Evitá ordenar, insertar o mover filas durante una campaña.
 
 ### Envíos rechazados antes de empezar
 
@@ -233,7 +238,7 @@ Atención: si se insertaron o borraron filas durante un envío, el estado `ENVIA
 
 ## Filas que nunca se envían
 
-- **Filas ocultas**, ya sea a mano o por un filtro (aunque tengan `Resultado` vacío), tanto en el envío como en la prueba.
+- **Filas ocultas manualmente o por un filtro normal** (aunque tengan `Resultado` vacío), tanto en el envío como en la prueba. **No incluye vistas de filtro** (`Datos → Vistas de filtro`): Sheets no informa esa selección a `isRowHiddenByFilter()`. Si usás una vista de filtro, sus filas no visibles también pueden enviarse; para excluirlas, usá un filtro normal o `Resultado = SKIP`. El envío real exige reconocer explícitamente esta limitación.
 - **Filas con `Resultado` con cualquier valor** (`SKIP`, `Email Sent`, `ENVIANDO`, `REVISAR`, una fecha, cualquier texto).
 - **Filas con fórmulas volátiles** (`=NOW()`, `=RAND()`, `=RANDBETWEEN()`, o fórmulas que dependan de ellas). El script compara la fila confirmada con la fila al momento de enviar; como esas fórmulas cambian en cada lectura, la fila se omite **siempre** como `Cambió después de la confirmación`. Reemplazá la fórmula por su valor (Copiar → Pegar solo valores) antes de enviar.
 - **Filas inválidas**: dirección inválida o con varias direcciones, `Email Address` vacío, marcador sin valor, enlace no aceptado, archivo inexistente o sin acceso, tipo de archivo no soportado, adjuntos o cuerpo demasiado grandes. Aparecen en `Validar` con su motivo y no cambian de estado (D-19).
@@ -247,7 +252,7 @@ Una confirmación admite como mucho **500 filas** (`MAX_CONFIRM_ROWS`, D-41). Si
 
 Para enviar por tandas:
 
-1. Activá un filtro en la pestaña (por ejemplo, por una columna propia de grupo o por un rango de filas) que deje visibles como mucho 500 filas pendientes. Las filas ocultas por el filtro no se envían.
+1. Activá un **filtro normal** (`Datos → Crear un filtro`, no una vista de filtro) en la pestaña, por ejemplo por una columna propia de grupo, que deje visibles como mucho 500 filas pendientes. Las filas ocultas por ese filtro no se envían.
 2. `Validar`, `Revisar envío` y confirmá esa tanda.
 3. Cambiá el filtro para la tanda siguiente y repetí. Las filas ya enviadas quedan `Email Sent` y no se vuelven a enviar.
 
@@ -257,7 +262,7 @@ Además, cada ejecución tiene un presupuesto de tiempo de 4,5 minutos y depende
 
 La confirmación y el progreso viven en `CacheService.getUserCache()`: una caché aislada por usuario y por script, que vence sola y que Google puede vaciar antes de tiempo.
 
-- **Confirmación** (`MM_CONF_<token>`, 10 minutos, un solo uso): huellas SHA-256 de la plantilla y de cada fila confirmada (y de sus `Fecha`, `Campaña` y `Detalle`), los números de fila, la dirección de la cuenta que ejecuta (y, en la prueba, la casilla de destino, que es la misma cuenta), el remitente y el Reply-To, los identificadores de la pestaña y del borrador, el nombre o ID de campaña, y los números de fila y nombres de columna que se reemplazarían. **Nunca** guarda valores de las filas (destinatarios, variables, enlaces de Drive), los valores de `Fecha` / `Campaña` / `Detalle` ni el contenido de la plantilla.
+- **Confirmación** (`MM_CONF_<token>`, 10 minutos, un solo uso): huellas SHA-256 de la plantilla (incluido el contenido binario de adjuntos e imágenes inline del borrador) y de cada fila confirmada (incluidas versiones de adjuntos de Drive) (y de sus `Fecha`, `Campaña` y `Detalle`), los números de fila, la dirección de la cuenta que ejecuta (y, en la prueba, la casilla de destino, que es la misma cuenta), el remitente y el Reply-To, los identificadores de la pestaña y del borrador, el nombre o ID de campaña, y los números de fila y nombres de columna que se reemplazarían. **Nunca** guarda valores de las filas (destinatarios, variables, enlaces de Drive), los valores de `Fecha` / `Campaña` / `Detalle` ni el contenido de la plantilla.
 - **Progreso** (`MM_PROG_<token>`, 30 minutos): números de fila, resultados, detalles (con toda palabra que contenga `@` reemplazada por `[dirección]` antes de recortar, así que tampoco quedan fragmentos de direcciones), contadores y motivo de corte. **No guarda destinatarios.**
 
 El panel solo recibe el token y la vista ya armada; nunca envía filas ni huellas al servidor. Si la caché pierde la confirmación antes de tiempo, el envío responde `La confirmación venció o no es válida; volvé a revisar` y no envía nada.

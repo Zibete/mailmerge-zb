@@ -83,6 +83,11 @@ function createServices_() {
       return requireSheet(sheetId).getRange(rowNumber, 1, 1, width).getDisplayValues()[0];
     },
 
+    isRowVisible: function (sheetId, rowNumber) {
+      const sheet = requireSheet(sheetId);
+      return !sheet.isRowHiddenByUser(rowNumber) && !sheet.isRowHiddenByFilter(rowNumber);
+    },
+
     // Escribe celdas de una fila de datos (`column` 0-based) en el orden dado,
     // con los textos neutralizados (D-37, D-38). Un único `flush` al final
     // persiste toda la transición antes de seguir.
@@ -191,6 +196,7 @@ function createServices_() {
         mimeType: file.getMimeType(),
         size: file.getSize(),
         trashed: file.isTrashed(),
+        modifiedAt: file.getLastUpdated().toISOString(),
       };
     },
 
@@ -282,14 +288,19 @@ function createServices_() {
 
   // SHA-256 en hexadecimal en minúsculas (D-27). `computeDigest` devuelve
   // bytes con signo (-128..127): `& 0xff` los lleva a 0..255.
+  function digestHex(bytes) {
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+      hex += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
+    }
+    return hex;
+  }
   const crypto = {
     sha256Hex: function (text) {
-      const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text), Utilities.Charset.UTF_8);
-      let hex = '';
-      for (let i = 0; i < bytes.length; i++) {
-        hex += ('0' + (bytes[i] & 0xff).toString(16)).slice(-2);
-      }
-      return hex;
+      return digestHex(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text), Utilities.Charset.UTF_8));
+    },
+    sha256HexBytes: function (bytes) {
+      return digestHex(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
     },
   };
 

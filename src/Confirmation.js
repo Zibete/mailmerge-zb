@@ -176,7 +176,7 @@ function prepareConfirmation_(deps, kind, rowNumber) {
     campaign: campaign,
     templateDigest: deps.crypto.sha256Hex(report.templateKey),
     rows: rows.map(function (row) {
-      return [row.rowNumber, deps.crypto.sha256Hex(row.key), deps.crypto.sha256Hex(metaKey_(row.values, columns))];
+      return [row.rowNumber, deps.crypto.sha256Hex(confirmedRowKey_(row)), deps.crypto.sha256Hex(metaKey_(row.values, columns))];
     }),
     overwriteRows: overwriteRows.map(function (row) {
       return { rowNumber: row.rowNumber, columns: row.columns.slice() };

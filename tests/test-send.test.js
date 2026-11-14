@@ -143,7 +143,7 @@ test('AC-47 / D-40 / AC-54 / D-47: la prueba deja Email Sent; tras borrar Result
   assert.deepEqual(noConsent.view.overwriteRows, [{ rowNumber: 2, columns: ['Fecha', 'Campaña', 'Detalle'] }]);
   assert.equal(noConsent.view.consentRequired, true);
   const writesBefore = fake.calls.cellWrites.length;
-  const rejected = plain(ctx.executeConfirmed_(fake.deps, noConsent.token, 'send'));
+  const rejected = plain(ctx.executeConfirmed_(fake.deps, noConsent.token, 'send', undefined, true));
   assert.equal(rejected.ok, false);
   assert.equal(rejected.stoppedReason, CONSENT_MESSAGE);
   assert.equal(fake.calls.sent.length, 1);
@@ -154,7 +154,7 @@ test('AC-47 / D-40 / AC-54 / D-47: la prueba deja Email Sent; tras borrar Result
   fake.setNow(DEFAULT_NOW + 60000);
   const withConsent = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
   assert.equal(withConsent.view.consentRequired, true);
-  const real = plain(ctx.executeConfirmed_(fake.deps, withConsent.token, 'send', true));
+  const real = plain(ctx.executeConfirmed_(fake.deps, withConsent.token, 'send', true, true));
   assert.equal(real.ok, true, JSON.stringify(real));
   assert.deepEqual(real.rows.map((row) => [row.rowNumber, row.result]), [
     [2, 'Email Sent'],
@@ -301,7 +301,7 @@ test('AC-35: un token de prueba ejecutado como envío y un token de envío ejecu
   {
     const { ctx, fake } = setup();
     const prep = plain(ctx.prepareConfirmation_(fake.deps, 'test', 2));
-    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send'));
+    const result = plain(ctx.executeConfirmed_(fake.deps, prep.token, 'send', undefined, true));
     assert.equal(result.ok, false);
     assert.equal(result.stoppedReason, WRONG_KIND_MESSAGE);
     assert.equal(fake.calls.sent.length, 0);

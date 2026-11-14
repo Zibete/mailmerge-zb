@@ -116,6 +116,7 @@ function preparedSend(view = sendView(), token = TOKEN) {
   const dom = loaded();
   dom.click('review-send');
   dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token, view });
+  dom.setChecked('send-filter-ack', true);
   return dom;
 }
 
@@ -227,6 +228,8 @@ test('AC-52: "Enviar N correos" deshabilitado hasta un prepareSendPending exitos
   dom.click('review-send');
   dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token: TOKEN, view: sendView() });
   assert.equal(dom.isVisible('send-confirmation'), true);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  dom.setChecked('send-filter-ack', true);
   assert.equal(dom.byId('execute-send').disabled, false);
   assert.equal(dom.text('execute-send'), 'Enviar 3 correos');
   assert.equal(dom.isVisible('send-consent-box'), false);
@@ -254,7 +257,7 @@ test('AC-52 / D-45: el clic llama a executeSendPending con exactamente el token 
 
   const executes = dom.callsTo('executeSendPending');
   assert.equal(executes.length, 1);
-  assert.deepEqual(executes[0].args, [TOKEN, false]);
+  assert.deepEqual(executes[0].args, [TOKEN, false, true]);
   assert.equal(typeof executes[0].args[1], 'boolean');
   assert.equal(dom.byId('execute-send').disabled, true);
   assert.equal(dom.byId('review-send').disabled, true, 'sin otra operación mientras se envía');
@@ -393,10 +396,11 @@ test('AC-52 / D-45: una falla de executeSendPending muestra el último progreso 
   // Volver a enviar exige un prepareSendPending nuevo con su propio token.
   dom.click('review-send');
   dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token: TOKEN_2, view: sendView() });
+  dom.setChecked('send-filter-ack', true);
   dom.click('execute-send');
   const executes = dom.callsTo('executeSendPending');
   assert.equal(executes.length, 2);
-  assert.deepEqual(executes[1].args, [TOKEN_2, false]);
+  assert.deepEqual(executes[1].args, [TOKEN_2, false, true]);
   assert.equal(dom.isVisible('progress-guidance'), false);
 });
 
@@ -474,7 +478,7 @@ test('AC-54 / D-47: con consentRequired la casilla aparece sin marcar y habilita
   dom.click('execute-send');
   const executes = dom.callsTo('executeSendPending');
   assert.equal(executes.length, 1);
-  assert.deepEqual(executes[0].args, [TOKEN, true]);
+  assert.deepEqual(executes[0].args, [TOKEN, true, true]);
 });
 
 test('AC-54 / D-47: sin consentRequired no hay casilla y la llamada lleva false', () => {
@@ -482,7 +486,7 @@ test('AC-54 / D-47: sin consentRequired no hay casilla y la llamada lleva false'
 
   assert.equal(dom.isVisible('send-consent-box'), false);
   dom.click('execute-send');
-  assert.deepEqual(dom.lastCall('executeSendPending').args, [TOKEN, false]);
+  assert.deepEqual(dom.lastCall('executeSendPending').args, [TOKEN, false, true]);
 });
 
 test('AC-54 / D-47: una confirmación nueva vuelve a mostrar la casilla sin marcar', () => {
@@ -812,4 +816,19 @@ test('fake-dom: document y los elementos lanzan fuera del subconjunto permitido'
     () => loadSidebar({ html: page('document.getElementById("box").addEventListener("submit", function () {});') }),
     /evento no permitido/
   );
+});
+
+
+test('P0-2: la casilla de filtros es obligatoria en cada nueva confirmación y no puede saltarse el bloqueo de UI', () => {
+  const dom = loaded();
+  dom.click('review-send');
+  dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token: TOKEN, view: sendView() });
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  dom.click('execute-send', { force: true });
+  assert.equal(dom.callsTo('executeSendPending').length, 0);
+  dom.setChecked('send-filter-ack', true);
+  assert.equal(dom.byId('execute-send').disabled, false);
+  dom.click('execute-send');
+  assert.deepEqual(dom.lastCall('executeSendPending').args, [TOKEN, false, true]);
 });

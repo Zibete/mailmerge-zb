@@ -26,17 +26,23 @@ export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH" &
 Resumen real:
 
 ```text
-1..311
-# tests 311
+1..322
+# tests 322
 # suites 0
-# pass 311
+# pass 322
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
 ```
 
-Por archivo (`node --test <archivo>`): `attachments.test.js` 12, `confirmation.test.js` 56, `manifest.test.js` 7, `preflight.test.js` 25, `send.test.js` 44, `services.test.js` 23, `setup.test.js` 29, `sheet.test.js` 24, `sidebar.test.js` 31, `template.test.js` 13, `test-send.test.js` 14, `ui.test.js` 33.
+Conteos del **cierre histórico original de V2** (antes de los tests de seguridad; no representan la ejecución actual), por archivo (`node --test <archivo>`): `attachments.test.js` 12, `confirmation.test.js` 56, `manifest.test.js` 7, `preflight.test.js` 25, `send.test.js` 44, `services.test.js` 23, `setup.test.js` 29, `sheet.test.js` 24, `sidebar.test.js` 31, `template.test.js` 13, `test-send.test.js` 14, `ui.test.js` 33.
+
+## Regresión de seguridad posterior al cierre de V2 (2026-11-09)
+
+Las correcciones 1–3 de `plans/2026-11-09_seguridad-envios-v2.md` se verificaron **solo con mocks locales**. La suite completa pasó con **322/322** tests y 0 fallos. Los nuevos tests de `tests/send-safety.test.js` verifican ocho escenarios: intercambio de filas durante la descarga y después del claim; rechazo del envío sin reconocer el alcance real de los filtros; cambios de contenido de adjuntos comunes e imágenes inline; cambios de archivos Drive antes y durante la descarga; y ocultamiento de una fila mientras se construye el correo. `tests/services.test.js`, `tests/sidebar.test.js` y otras suites cubren el contrato de adaptadores y la casilla obligatoria.
+
+**Límites sin validar en vivo:** las vistas de filtro no restringen automáticamente el envío; las versiones de Drive se reconocen por metadatos, no por hash binario; Sheets y Gmail no forman una transacción atómica, por lo que no debe editarse u ordenarse la hoja mientras se envía. Sigue pendiente el piloto con Apps Script, Gmail y Drive reales.
 
 ## Criterios AC-01 a AC-55
 
@@ -159,7 +165,7 @@ Algunos tests no llevan ID porque el plan no les asigna uno (por ejemplo `listSh
 
 Criterios de `plans/2026-11-09_mail-merge-v2.md` ("Criterios de aceptación verificables"):
 
-1. `node --test` pasa completo: 311 tests, 311 pass, 0 fail (ver "Resultado de la suite"), con los criterios de regresión y AC-32 a AC-55.
+1. `node --test` pasa completo: 322 tests, 322 pass, 0 fail (ver "Resultado de la suite"), con los criterios de regresión y AC-32 a AC-55.
 2. Sin coincidencias en `src/` para las APIs y nombres retirados: `grep -rnE "\.alert\(|\.prompt\(|ButtonSet|innerHTML|UrlFetchApp|newTrigger|setSharing|appendLog|LOG_HEADERS" src` no devuelve nada (salida vacía, código de salida 1). También lo verifican AC-32, AC-28 y AC-51.
 3. `src/appsscript.json` idéntico al de la V1: `git diff --exit-code e5ad9ac -- src/appsscript.json` sin salida y con código de salida 0 (`e5ad9ac` es el último commit de la V1).
 4. Este documento: AC-01 a AC-55, cada uno con sus tests o su retiro justificado; nivel `LOCAL_VERIFIED`.
@@ -204,7 +210,7 @@ Sin secretos versionados: `git ls-files | grep -iE "\.env|clasp|credential|token
 
 ## Evidencia de AC-30
 
-- Comando: `node --test` con Node portable v20.11.1, sin `npm install`, sin `package.json` ni dependencias. Resultado: 311 tests, 311 pass, 0 fail.
+- Comando: `node --test` con Node portable v20.11.1, sin `npm install`, sin `package.json` ni dependencias. Resultado: 322 tests, 322 pass, 0 fail.
 - Los tests solo cargan módulos del propio Node (`node:test`, `node:assert/strict`, `node:vm`, `node:fs`, `node:path`, `node:crypto`) y los helpers locales; ningún archivo de `tests/` ni de `src/` hace pedidos de red (`http`, `https`, `net`, `fetch`, `UrlFetchApp`).
 - Los servicios de Google (`SpreadsheetApp`, `GmailApp`, `DriveApp`, `LockService`, `MailApp`, `PropertiesService`, `CacheService`, `Session`, `Utilities`, `HtmlService`) y el DOM de la sidebar se reemplazan por falsos; no hay credenciales, tokens ni IDs reales de archivos.
 - Sintaxis: `node --check` sin errores sobre los 26 archivos `src/*.js` (10) y `tests/**/*.js` (16: 12 de tests, 3 helpers y 1 fixture); `src/appsscript.json` es JSON válido; `git diff --check` sin salida.

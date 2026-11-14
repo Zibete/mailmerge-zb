@@ -111,6 +111,10 @@ function createFakeDeps(fixture, options = {}) {
         hiddenByFilter: sheet.values.map((row, i) => Boolean(sheet.hiddenByFilter[i])),
       };
     },
+    isRowVisible(sheetId, rowNumber) {
+      const sheet = requireSheet(sheetId);
+      return !sheet.hiddenByUser[rowNumber - 1] && !sheet.hiddenByFilter[rowNumber - 1];
+    },
     readRow(sheetId, rowNumber, width) {
       if (typeof hooks.beforeReadRow === 'function') {
         hooks.beforeReadRow(rowNumber);
@@ -183,6 +187,17 @@ function createFakeDeps(fixture, options = {}) {
     },
   };
 
+  // Imita Blob.getBytes() sin añadir propiedades visibles en los asserts
+  // existentes. Los bytes reflejan mutaciones posteriores del blob.
+  function testBlob(blob) {
+    if (blob && typeof blob.getBytes !== 'function') {
+      Object.defineProperty(blob, 'getBytes', {
+        configurable: true, value: function () { return Array.from(Buffer.from(String(blob.fakeBlob), 'utf8')); },
+      });
+    }
+    return blob;
+  }
+
   const gmail = {
     listDrafts() {
       return fixture.gmail.drafts.map((draft) => ({ id: draft.id, subject: draft.subject, date: draft.date }));
@@ -197,8 +212,8 @@ function createFakeDeps(fixture, options = {}) {
         subject: draft.subject,
         plainBody: draft.plainBody,
         htmlBody: draft.htmlBody,
-        attachments: draft.attachments.map((a) => ({ name: a.name, size: a.size, mimeType: a.mimeType, blob: a.blob })),
-        inlineImages: draft.inlineImages.map((image) => ({ name: image.name, blob: image.blob })),
+        attachments: draft.attachments.map((a) => ({ name: a.name, size: a.size, mimeType: a.mimeType, blob: testBlob(a.blob) })),
+        inlineImages: draft.inlineImages.map((image) => ({ name: image.name, blob: testBlob(image.blob) })),
       };
     },
     getAliases() {
@@ -230,7 +245,7 @@ function createFakeDeps(fixture, options = {}) {
       if (!file || file.noAccess) {
         throw new Error('Falso: el archivo no existe o no hay acceso');
       }
-      return { id: file.id, name: file.name, mimeType: file.mimeType, size: file.size, trashed: Boolean(file.trashed) };
+      return { id: file.id, name: file.name, mimeType: file.mimeType, size: file.size, trashed: Boolean(file.trashed), modifiedAt: file.modifiedAt || '2026-11-01T00:00:00.000Z' };
     },
     getAttachment(fileInfo) {
       calls.driveCalls.push({ op: 'getAttachment', id: fileInfo.id });
@@ -338,6 +353,9 @@ function createFakeDeps(fixture, options = {}) {
     crypto: {
       sha256Hex(text) {
         return nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
+      },
+      sha256HexBytes(bytes) {
+        return nodeCrypto.createHash('sha256').update(Buffer.from(bytes.map((n) => n & 0xff))).digest('hex');
       },
     },
   };

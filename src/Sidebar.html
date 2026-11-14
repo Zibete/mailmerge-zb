@@ -96,13 +96,14 @@
 
     <section id="section-send">
       <h2>Envío</h2>
-      <p class="hint">Envía las filas visibles con Resultado vacío y sin errores.</p>
+      <p class="hint">Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
       <div class="buttons">
         <button type="button" id="review-send">Revisar envío</button>
       </div>
       <p id="send-message" class="message" role="status" aria-live="polite"></p>
       <div id="send-confirmation" class="confirmation" hidden>
         <div id="send-view" class="view"></div>
+        <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
         <div id="send-consent-box" class="view" hidden>
           <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
           <ul id="send-consent-rows"></ul>
@@ -333,7 +334,8 @@
           if (!liveConfirmation(kind) || state.busy[kind] || running()) {
             return false;
           }
-          return !confirmation.view.consentRequired || confirmUi[kind].consent.checked === true;
+          return (kind !== 'send' || byId('send-filter-ack').checked === true) &&
+            (!confirmation.view.consentRequired || confirmUi[kind].consent.checked === true);
         }
 
         function refreshControls() {
@@ -359,6 +361,9 @@
             ui.execute.disabled = !canExecute(kind);
             ui.cancel.disabled = !confirmation || confirmation.used || state.busy[kind] || isRunning;
             ui.consent.disabled = !liveConfirmation(kind) || isRunning;
+            if (kind === 'send') {
+              byId('send-filter-ack').disabled = !liveConfirmation(kind) || isRunning;
+            }
           });
         }
 
@@ -638,6 +643,7 @@
           appendLine(ui.view, 'La confirmación vence: ' + formatDate(view.expiresAtIso));
 
           ui.consent.checked = false;
+          if (kind === 'send') { byId('send-filter-ack').checked = false; }
           clear(ui.consentRows);
           if (view.consentRequired) {
             setText(ui.consentText, view.consentText);
@@ -671,6 +677,7 @@
           var ui = confirmUi[kind];
           ui.box.hidden = true;
           ui.consent.checked = false;
+          if (kind === 'send') { byId('send-filter-ack').checked = false; }
           clear(ui.view);
         }
 
@@ -958,13 +965,14 @@
           if (kind === 'test') {
             runner.executeTestSend(token, overwriteConsent);
           } else {
-            runner.executeSendPending(token, overwriteConsent);
+            runner.executeSendPending(token, overwriteConsent, byId('send-filter-ack').checked === true);
           }
           schedulePoll(run);
         }
 
         // --- Eventos ----------------------------------------------------------
 
+        byId('send-filter-ack').addEventListener('change', refreshControls);
         el.save.addEventListener('click', saveConfigForm);
         el.validate.addEventListener('click', runValidation);
         el.applySetup.addEventListener('click', applySetup);

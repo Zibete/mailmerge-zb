@@ -64,6 +64,12 @@ Fuente: `plans/2026-11-09_mail-merge-v2.md`, sección "Decisiones de implementac
 | D-47 | Consentimiento obligatorio para reemplazar valores existentes de `Fecha`, `Campaña` o `Detalle` en una hoja completa: casilla sin marcar que identifica columnas y filas, y verificación en el servidor (`overwriteConsent === true`) | APROBADA (2026-11-09) | Es el flujo normal después de una prueba; no se destruyen datos sin consentimiento identificado |
 | D-48 | Huella independiente de `Fecha`, `Campaña` y `Detalle` por fila: si cambia después de confirmar, la fila se omite sin escribir y la ejecución sigue | APROBADA (2026-11-09) | El consentimiento no cubre datos que no existían al confirmar |
 
+### Seguridad de envíos tras la auditoría V2 (2026-11-09)
+
+- **S-01 — Identidad de filas:** tras construir el mensaje se releen identidad, metadatos y visibilidad antes de marcar `ENVIANDO`, y se verifica de nuevo la identidad y visibilidad después del marcado y antes de Gmail. Si falla esta última comprobación, se detiene y se requiere conciliación manual. No se prometen escrituras transaccionales en Sheets.
+- **S-02 — Vistas de filtro:** `isRowHiddenByFilter()` no las contempla; el panel lo advierte y exige reconocimiento explícito de la lista completa de destinatarios, exigido también por el servidor. Solo los filtros normales y las filas ocultas manualmente restringen la selección. Sin nuevos scopes ni dependencia de Sheets API.
+- **S-03 — Identidad de adjuntos:** la confirmación del borrador incluye SHA-256 del contenido de adjuntos e imágenes inline. Los archivos de Drive se identifican por ID, nombre, MIME, tamaño y última modificación, verificados por fila antes del claim. Esto no garantiza detectar cambios de Drive sin variación de los metadatos ni reemplaza el piloto real.
+
 ### Decisiones de la V1 reemplazadas o modificadas por la V2
 
 Las decisiones `D-01` a `D-24` están en `plans/2026-11-08_mail-merge-v1.md` y siguen vigentes salvo estas:
