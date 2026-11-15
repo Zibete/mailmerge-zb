@@ -215,6 +215,7 @@
         <li id="rail-4" class="rail__dot"><span aria-hidden="true">4</span><span class="sr-only">Envío</span></li>
       </ol>
     </header>
+    <p id="status-live" class="sr-only" role="status" aria-live="polite"></p>
 
     <main class="steps">
       <section class="step" id="section-campaign">
@@ -293,6 +294,7 @@
           <p class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
           <div class="buttons">
             <button type="button" id="review-test" class="btn">Revisar prueba</button>
+            <button type="button" id="skip-test" class="btn" hidden>Ir a Envío</button>
           </div>
           <p id="test-message" class="message" role="status" aria-live="polite"></p>
           <div id="test-confirmation" class="confirmation" hidden>
@@ -414,6 +416,8 @@
           truncated: byId('progress-truncated'),
           resultsBody: byId('results-body'),
           close: byId('close'),
+          skipTest: byId('skip-test'),
+          statusLive: byId('status-live'),
           counts: {
             total: byId('count-total'),
             processed: byId('count-processed'),
@@ -452,11 +456,19 @@
 
         // Estado del cliente. `confirmations[kind]` = { token, view, used,
         // expired, expiryTimer }; `run` = ejecución en curso o terminada.
+        // Los campos de Eclipse Console (plan 2026-11-14, "Estado del cliente
+        // (ampliación)") solo alimentan la presentación: fase, acordeón, riel.
         var state = {
           busy: { config: true, validation: false, test: false, send: false },
           setupHeaderKey: null,
           confirmations: { test: null, send: null },
-          run: null
+          run: null,
+          panel: null, // último PanelState recibido; null si getPanelState falló
+          configSaved: false, // panel.current no nulo o saveConfig exitoso
+          lastValidation: null, // última ValidationView; se borra al guardar
+          lastResult: null, // último SendResultView ok; se borra al guardar y en startRun()
+          transportFailed: false, // falla de transporte de execute… (D-45); se limpia en startRun()
+          openStep: 1 // 1..4, o 5 para la consola
         };
 
         // --- Utilidades de texto y DOM ---------------------------------------
@@ -494,6 +506,26 @@
           });
           container.appendChild(list);
           return list;
+        }
+
+        // className completo a partir de una base y modificadores (D-50).
+        function setClass(node, base, mods) {
+          var names = [base];
+          Object.keys(mods || {}).forEach(function (key) {
+            if (mods[key]) {
+              names.push(key);
+            }
+          });
+          node.className = names.join(' ');
+        }
+
+        // Solo atributos aria-* y role (D-50).
+        function setAria(node, name, value) {
+          node.setAttribute(name, String(value));
+        }
+
+        function focusNode(node) {
+          node.focus();
         }
 
         function showMessage(node, text, kind) {
@@ -590,6 +622,281 @@
               byId('send-filter-ack').disabled = !liveConfirmation(kind) || isRunning;
             }
           });
+          renderPhase();
+        }
+
+        // --- Command Center: fase, acordeón y riel (D-56, D-57) ---------------
+        // Solo presentación: nada de esto cambia el `disabled` de los botones
+        // de acción, que sale únicamente de las reglas de arriba.
+
+        var STEPS = [1, 2, 3, 4];
+        var STEP_TITLES = { 1: 'Campaña', 2: 'Validación', 3: 'Prueba', 4: 'Envío' };
+        // Paso abierto por defecto (5 = consola) y botón primario de cada fase.
+        var PHASE_STEP = {
+          'sin-configurar': 1,
+          configurada: 2,
+          'preparar-columnas': 2,
+          bloqueada: 2,
+          lista: 3,
+          'revisando-prueba': 3,
+          'revisando-envio': 4,
+          enviando: 5,
+          terminada: 5,
+          incierta: 5
+        };
+        var PHASE_PRIMARY = {
+          'sin-configurar': 'save',
+          configurada: 'validate',
+          'preparar-columnas': 'apply-setup',
+          bloqueada: 'validate',
+          lista: 'review-test',
+          'revisando-prueba': 'execute-test',
+          'revisando-envio': 'execute-send'
+        };
+        // Etapa actual del riel (5 = todas hechas).
+        var RAIL_CURRENT = {
+          'sin-configurar': 1,
+          configurada: 2,
+          'preparar-columnas': 2,
+          bloqueada: 2,
+          lista: 3,
+          'revisando-prueba': 3,
+          'revisando-envio': 4,
+          enviando: 4,
+          terminada: 5,
+          incierta: 4
+        };
+        var ACTION_BUTTONS = ['save', 'validate', 'apply-setup', 'review-test', 'review-send', 'skip-test'];
+        var SEND_BUTTONS = ['execute-test', 'execute-send'];
+        var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
+        // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
+        var HINT_IDS = [];
+
+        var previousPhase = null;
+
+        function selectsFilled() {
+          return Boolean(el.sheet.value) && Boolean(el.draft.value) && Boolean(el.from.value);
+        }
+
+        // Función pura del estado del cliente; condiciones en el orden del plan.
+        function derivePhase(current) {
+          if (running()) {
+            return 'enviando';
+          }
+          if (liveConfirmation('send')) {
+            return 'revisando-envio';
+          }
+          if (liveConfirmation('test')) {
+            return 'revisando-prueba';
+          }
+          if (current.transportFailed) {
+            return 'incierta';
+          }
+          if (current.lastResult) {
+            return 'terminada';
+          }
+          if (!current.configSaved || !selectsFilled() || current.panel === null || list(current.panel.drafts).length === 0) {
+            return 'sin-configurar';
+          }
+          var validation = current.lastValidation;
+          if (!validation) {
+            return 'configurada';
+          }
+          if (validation.setup && validation.setup.needed) {
+            return 'preparar-columnas';
+          }
+          if (list(validation.globalErrors).length > 0 || count((validation.counts || {}).valid) === 0) {
+            return 'bloqueada';
+          }
+          return 'lista';
+        }
+
+        function openStep(n, moveFocus) {
+          state.openStep = n;
+          STEPS.forEach(function (i) {
+            var toggle = byId('step-' + i + '-toggle');
+            // Un paso con toggle deshabilitado (confirmación viva) nunca se cierra (D-57).
+            var open = i === n || toggle.disabled;
+            byId('step-' + i + '-body').hidden = !open;
+            setAria(toggle, 'aria-expanded', open ? 'true' : 'false');
+            setClass(toggle, 'step__toggle', { 'is-open': open });
+          });
+          if (moveFocus) {
+            focusNode(byId(n <= 4 ? 'step-' + n + '-toggle' : 'console-title'));
+          }
+        }
+
+        // Regla de apertura automática: entrar a una revisión o a una ejecución
+        // abre su paso; al salir de ellas (cancelar, vencer, rechazo) queda
+        // abierto el paso de origen, salvo que la ejecución termine o quede
+        // incierta, que abren la consola.
+        function shouldAutoOpen(prev, next) {
+          if (prev === next) {
+            return false;
+          }
+          if (next === 'enviando' || next === 'revisando-envio') {
+            return true;
+          }
+          if (next === 'revisando-prueba') {
+            return prev !== 'revisando-envio';
+          }
+          if (prev === 'enviando') {
+            return next === 'terminada' || next === 'incierta';
+          }
+          return prev !== 'revisando-prueba' && prev !== 'revisando-envio';
+        }
+
+        function correos(n) {
+          return n === 1 ? '1 correo' : n + ' correos';
+        }
+
+        function confirmationExpired(kind) {
+          var confirmation = state.confirmations[kind];
+          return Boolean(confirmation && confirmation.expired && !confirmation.used);
+        }
+
+        function runOf(kind) {
+          return state.run && state.run.kind === kind ? state.run : null;
+        }
+
+        // Chip, tono y resumen de cada paso.
+        function stepStatus(n, phase) {
+          if (n === 1) {
+            var ready = state.configSaved && phase !== 'sin-configurar';
+            return {
+              chip: ready ? 'Lista' : 'Sin guardar',
+              tone: ready ? 'ok' : 'muted',
+              summary: ready ? asText(el.campaignName.value).trim() : ''
+            };
+          }
+          if (n === 2) {
+            var validation = state.lastValidation;
+            if (!validation) {
+              return { chip: 'Pendiente', tone: 'muted', summary: '' };
+            }
+            var counts = validation.counts || {};
+            var summary = count(counts.valid) + ' elegibles · ' + count(counts.invalid) + ' errores';
+            if (validation.setup && validation.setup.needed) {
+              return { chip: 'Preparar', tone: list(validation.setup.errors).length > 0 ? 'danger' : 'warn', summary: summary };
+            }
+            if (list(validation.globalErrors).length > 0 || count(counts.valid) === 0) {
+              return { chip: 'Bloqueada', tone: 'danger', summary: summary };
+            }
+            return { chip: 'Lista', tone: 'ok', summary: summary };
+          }
+          var kind = n === 3 ? 'test' : 'send';
+          var run = runOf(kind);
+          if (liveConfirmation(kind)) {
+            var view = state.confirmations[kind].view;
+            return { chip: 'Revisión', tone: 'warn', summary: kind === 'send' ? correos(count(view.count)) : '' };
+          }
+          if (confirmationExpired(kind)) {
+            return { chip: 'Vencida', tone: 'danger', summary: '' };
+          }
+          if (run && running()) {
+            return { chip: 'Enviando', tone: 'live', summary: kind === 'send' ? correos(count(run.view.count)) : '' };
+          }
+          if (run && state.transportFailed) {
+            return { chip: 'Revisión', tone: 'warn', summary: '' };
+          }
+          if (run && state.lastResult) {
+            var result = state.lastResult;
+            if (kind === 'send') {
+              return { chip: 'Hecha', tone: 'ok', summary: correos(count((result.counts || {}).sent)) };
+            }
+            var sent = list(result.rows).filter(function (row) {
+              return asText(row.result) === 'Email Sent';
+            })[0];
+            return { chip: 'Hecha', tone: 'ok', summary: sent ? 'fila ' + asText(sent.rowNumber) + ' enviada' : '' };
+          }
+          return { chip: 'Pendiente', tone: 'muted', summary: '' };
+        }
+
+        function renderRail(phase) {
+          var current = RAIL_CURRENT[phase];
+          STEPS.forEach(function (i) {
+            var dot = byId('rail-' + i);
+            setClass(dot, 'rail__dot', { 'is-done': i < current, 'is-current': i === current, 'is-locked': i > current });
+            if (i === current) {
+              setAria(dot, 'aria-current', 'step');
+            } else {
+              dot.removeAttribute('aria-current');
+            }
+            var status = stepStatus(i, phase);
+            setText(byId('step-' + i + '-chip'), status.chip);
+            var mods = {};
+            mods['chip--' + status.tone] = true;
+            setClass(byId('step-' + i + '-chip'), 'chip', mods);
+            setText(byId('step-' + i + '-summary'), status.summary);
+          });
+        }
+
+        function renderButtons(phase) {
+          var primary = PHASE_PRIMARY[phase] || null;
+          ACTION_BUTTONS.forEach(function (id) {
+            setClass(byId(id), 'btn', { 'btn--primary': id === primary });
+          });
+          SEND_BUTTONS.forEach(function (id) {
+            setClass(byId(id), 'btn', { 'btn--primary': id === primary, 'btn--send': true });
+          });
+          CANCEL_BUTTONS.forEach(function (id) {
+            setClass(byId(id), 'btn', { 'btn--ghost': true });
+          });
+          el.skipTest.hidden = phase !== 'lista';
+        }
+
+        function announcement(phase) {
+          var run = state.run;
+          switch (phase) {
+            case 'revisando-prueba':
+              return 'Confirmación de prueba lista';
+            case 'revisando-envio':
+              return 'Confirmación lista: ' + count(state.confirmations.send.view.count) + ' destinatarios';
+            case 'enviando':
+              return run && run.kind === 'test' ? 'Prueba en curso' : 'Envío en curso';
+            case 'terminada':
+              return run && run.kind === 'test' ? 'Prueba terminada' : 'Envío terminado';
+            case 'incierta':
+              return 'Resultado incierto: revisá la columna Resultado antes de volver a enviar';
+            default:
+              return 'Paso ' + PHASE_STEP[phase] + ': ' + STEP_TITLES[PHASE_STEP[phase]];
+          }
+        }
+
+        // Ayudas contextuales (D-58): ids `hint-*` visibles para la fase.
+        function hintsFor(phase, data) {
+          var visible = [];
+          return visible;
+        }
+
+        function renderHints(phase) {
+          var visible = hintsFor(phase, { panel: state.panel, validation: state.lastValidation, result: state.lastResult });
+          HINT_IDS.forEach(function (id) {
+            byId(id).hidden = visible.indexOf(id) === -1;
+          });
+        }
+
+        function renderPhase() {
+          var phase = derivePhase(state);
+          // El disabled de los toggles va antes de openStep(), que lo lee.
+          byId('step-3-toggle').disabled = liveConfirmation('test');
+          byId('step-4-toggle').disabled = liveConfirmation('send');
+          renderRail(phase);
+          renderButtons(phase);
+          renderHints(phase);
+          var prev = previousPhase;
+          previousPhase = phase;
+          if (phase !== prev) {
+            setText(el.statusLive, announcement(phase));
+          }
+          if (shouldAutoOpen(prev, phase)) {
+            openStep(PHASE_STEP[phase], true);
+          } else if (
+            (byId('step-3-toggle').disabled && byId('step-3-body').hidden) ||
+            (byId('step-4-toggle').disabled && byId('step-4-body').hidden)
+          ) {
+            openStep(state.openStep, false); // un paso con confirmación viva siempre visible
+          }
         }
 
         // --- Campaña ----------------------------------------------------------
@@ -624,6 +931,8 @@
           }), current.from);
           el.replyTo.value = asText(current.replyTo);
           el.campaignName.value = asText(current.campaignName);
+          state.panel = panel || null;
+          state.configSaved = Boolean(panel && panel.current);
           state.busy.config = false;
           if (drafts.length === 0) {
             showMessage(el.configMessage, 'No hay borradores en tu cuenta de Gmail. Creá uno y volvé a abrir el panel.', 'error');
@@ -641,6 +950,7 @@
             .withSuccessHandler(onPanelState)
             .withFailureHandler(function (error) {
               state.busy.config = false;
+              state.panel = null;
               showMessage(el.configMessage, failureMessage(error), 'error');
               refreshControls();
             })
@@ -664,6 +974,9 @@
               if (config && config.campaignName !== undefined) {
                 el.campaignName.value = asText(config.campaignName);
               }
+              state.configSaved = true;
+              state.lastValidation = null;
+              state.lastResult = null;
               showMessage(el.configMessage, 'Configuración guardada. Usá "Validar" antes de enviar.', 'ok');
               refreshControls();
             })
@@ -714,6 +1027,7 @@
           state.setupHeaderKey = null;
           el.setupBox.hidden = true;
           view = view || {};
+          state.lastValidation = view;
 
           var globalErrors = list(view.globalErrors);
           if (globalErrors.length > 0) {
@@ -1063,6 +1377,8 @@
           el.truncated.hidden = true;
           el.progressGuidance.hidden = true;
           setText(el.progressGuidance, '');
+          state.transportFailed = false; // la guía de D-45 se oculta aquí
+          state.lastResult = null;
           setText(el.progressStatus, kind === 'test' ? 'Prueba solicitada; esperando al servidor…' : 'Envío solicitado; esperando al servidor…');
           el.progressSection.hidden = false;
           return run;
@@ -1138,8 +1454,10 @@
             var lines = list(result.summaryLines).map(asText);
             showMessage(ui.message, lines.length > 0 ? lines.join('\n') : asText(result.stoppedReason) || 'No se envió nada.', 'error');
             refreshControls();
+            openStep(run.kind === 'test' ? 3 : 4, true); // el motivo queda a la vista
             return;
           }
+          state.lastResult = result;
           setText(el.progressStatus, run.kind === 'test' ? 'Prueba terminada.' : 'Envío terminado.');
           setCounters(result.counts);
           renderRows(result.rows, function (row) {
@@ -1166,6 +1484,7 @@
           setText(el.progressStatus, 'Sin respuesta del servidor.');
           setText(el.progressGuidance, GUIDANCE);
           el.progressGuidance.hidden = false;
+          state.transportFailed = true;
           refreshControls();
         }
 
@@ -1219,6 +1538,22 @@
         el.close.addEventListener('click', function () {
           google.script.host.close();
         });
+        // Un select vaciado se refleja en la fase sin esperar otra acción.
+        [el.sheet, el.draft, el.from].forEach(function (select) {
+          select.addEventListener('change', refreshControls);
+        });
+        STEPS.forEach(function (i) {
+          var toggle = byId('step-' + i + '-toggle');
+          toggle.addEventListener('click', function () {
+            if (!toggle.disabled) {
+              openStep(i, false);
+            }
+          });
+        });
+        // "Ir a Envío" solo abre el paso 4: no llama al servidor.
+        el.skipTest.addEventListener('click', function () {
+          openStep(4, true);
+        });
 
         loadPanel();
 
@@ -1245,7 +1580,10 @@
           cancelSend: function () {
             cancel('send');
           },
-          refresh: refreshControls
+          refresh: refreshControls,
+          phase: function () {
+            return derivePhase(state);
+          }
         };
       })();
     </script>

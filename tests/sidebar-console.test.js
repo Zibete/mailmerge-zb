@@ -114,9 +114,13 @@ test('D-57 / D-54: los pasos, el riel y la consola existen con aria-controls hac
     assert.equal(toggle.tagName, 'BUTTON');
     assert.equal(toggle.type, 'button');
     assert.equal(dom.attribute(`step-${step.n}-toggle`, 'aria-controls'), `step-${step.n}-body`);
-    assert.equal(dom.attribute(`step-${step.n}-toggle`, 'aria-expanded'), 'true');
+    // Desde el paso 3 del plan el acordeón abre un solo paso al cargar (D-57):
+    // aria-expanded acompaña la visibilidad de cada cuerpo.
+    assert.equal(
+      dom.attribute(`step-${step.n}-toggle`, 'aria-expanded'),
+      dom.isVisible(`step-${step.n}-body`) ? 'true' : 'false'
+    );
     assert.equal(body.tagName, 'DIV');
-    assert.equal(dom.isVisible(`step-${step.n}-body`), true, `el cuerpo del paso ${step.n} está visible`);
     assert.equal(dom.byId(`step-${step.n}-summary`).tagName, 'SPAN');
     assert.equal(dom.byId(`step-${step.n}-chip`).tagName, 'SPAN');
     // El cuerpo y la cabecera viven dentro de la sección del paso.
@@ -144,4 +148,442 @@ test('D-57 / D-54: los pasos, el riel y la consola existen con aria-controls hac
   assert.equal(dom.created.length, 0, 'la carga no crea elementos');
   assert.deepEqual(dom.pendingTimers(), [], 'la carga no deja temporizadores');
   assert.equal(dom.callsTo('getPanelState').length, 1);
+});
+
+// --- Fases y Command Center (AC-56, D-56, D-57) -----------------------------
+
+const views = require('./fixtures/sidebar-views');
+
+const STEP_IDS = [1, 2, 3, 4];
+
+function openSteps(dom) {
+  return STEP_IDS.filter((n) => dom.isVisible(`step-${n}-body`));
+}
+
+function isPrimary(dom, id) {
+  return dom.byId(id).className.split(' ').includes('btn--primary');
+}
+
+function loaded(panel = views.panelState()) {
+  const dom = loadSidebar();
+  dom.resolve(dom.calls[0], panel);
+  return dom;
+}
+
+function validated(variant = 'ok', dom = loaded()) {
+  dom.click('validate');
+  dom.resolve(dom.lastCall('validateCampaign'), views.validationView(variant));
+  return dom;
+}
+
+function withSendConfirmation(dom, view = views.confirmationView('send'), token = views.TOKEN) {
+  dom.click('review-send');
+  dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token, view });
+  dom.setChecked('send-filter-ack', true);
+  return dom;
+}
+
+function withTestConfirmation(dom, view = views.confirmationView('test')) {
+  dom.setValue('test-row', '2');
+  dom.click('review-test');
+  dom.resolve(dom.lastCall('prepareTestSend'), { ok: true, errors: [], token: views.TEST_TOKEN, view });
+  return dom;
+}
+
+function finishedSend(result = views.sendResult('ok')) {
+  const dom = withSendConfirmation(validated('ok'));
+  dom.click('execute-send');
+  dom.resolve(dom.lastCall('executeSendPending'), result);
+  return dom;
+}
+
+test('AC-56 / D-56: al cargar sin configuración la fase es sin-configurar, el paso 1 está abierto y Guardar es el primario', () => {
+  const dom = loadSidebar();
+  assert.equal(dom.MailMergePanel.phase(), 'sin-configurar', 'antes de la respuesta de getPanelState');
+  dom.resolve(dom.calls[0], views.panelState({ current: null }));
+
+  assert.equal(dom.MailMergePanel.phase(), 'sin-configurar');
+  assert.deepEqual(openSteps(dom), [1]);
+  assert.equal(dom.isVisible('step-2-body'), false);
+  assert.equal(isPrimary(dom, 'save'), true);
+  assert.equal(isPrimary(dom, 'validate'), false);
+  assert.equal(dom.attribute('step-1-toggle', 'aria-expanded'), 'true');
+  assert.equal(dom.attribute('step-2-toggle', 'aria-expanded'), 'false');
+  assert.equal(dom.attribute('rail-1', 'aria-current'), 'step');
+  assert.equal(dom.text('step-1-chip'), 'Sin guardar');
+  assert.equal(dom.text('step-2-chip'), 'Pendiente');
+  assert.equal(dom.isVisible('skip-test'), false);
+  assert.equal(dom.text('status-live'), 'Paso 1: Campaña');
+  assert.equal(dom.attribute('status-live', 'role'), 'status');
+  assert.equal(dom.attribute('status-live', 'aria-live'), 'polite');
+  assert.equal(dom.created.length, 0, 'la carga no crea elementos');
+  assert.deepEqual(dom.pendingTimers(), [], 'la carga no deja temporizadores');
+  assert.equal(dom.calls.length, 1);
+
+  // Sin borradores o con getPanelState fallido la fase sigue siendo sin-configurar.
+  const noDrafts = loaded(views.panelState({ drafts: [] }));
+  assert.equal(noDrafts.MailMergePanel.phase(), 'sin-configurar');
+  const failed = loadSidebar();
+  failed.fail(failed.calls[0], new Error('Sin acceso a la hoja'));
+  assert.equal(failed.MailMergePanel.phase(), 'sin-configurar');
+  assert.deepEqual(openSteps(failed), [1]);
+});
+
+test('AC-56 / D-56: con configuración guardada la fase es configurada y Validar es el primario', () => {
+  const dom = loaded();
+
+  assert.equal(dom.MailMergePanel.phase(), 'configurada');
+  assert.deepEqual(openSteps(dom), [2]);
+  assert.equal(dom.focusedId(), 'step-2-toggle');
+  assert.equal(isPrimary(dom, 'validate'), true);
+  assert.equal(isPrimary(dom, 'save'), false);
+  assert.equal(dom.byId('save').className, 'btn');
+  assert.equal(dom.text('step-1-summary'), 'Otoño 2026');
+  assert.equal(dom.text('step-1-chip'), 'Lista');
+  assert.equal(dom.text('step-2-chip'), 'Pendiente');
+  assert.equal(dom.text('step-2-summary'), '');
+
+  // Vaciar un select vuelve a sin-configurar sin esperar otra acción.
+  dom.setValue('draft', '');
+  assert.equal(dom.MailMergePanel.phase(), 'sin-configurar');
+  assert.deepEqual(openSteps(dom), [1]);
+  dom.setValue('draft', 'draft-1');
+  assert.equal(dom.MailMergePanel.phase(), 'configurada');
+
+  // Primera apertura: guardar con éxito pasa a configurada.
+  const fresh = loaded(views.panelState({ current: null }));
+  fresh.setValue('sheet', '101');
+  fresh.setValue('draft', 'draft-1');
+  fresh.setValue('from', views.USER);
+  fresh.setValue('campaign-name', 'Primavera');
+  assert.equal(fresh.MailMergePanel.phase(), 'sin-configurar', 'sin guardar todavía');
+  fresh.click('save');
+  fresh.resolve(fresh.lastCall('saveConfig'), { sheetId: 101, draftId: 'draft-1', from: views.USER, replyTo: '', campaignName: 'Primavera' });
+  assert.equal(fresh.MailMergePanel.phase(), 'configurada');
+  assert.equal(fresh.text('step-1-summary'), 'Primavera');
+  assert.equal(fresh.text('step-1-chip'), 'Lista');
+});
+
+test('AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el paso 2', () => {
+  const dom = validated('ok');
+
+  assert.equal(dom.MailMergePanel.phase(), 'lista');
+  assert.equal(dom.isVisible('step-3-body'), true);
+  assert.deepEqual(openSteps(dom), [3]);
+  assert.equal(dom.focusedId(), 'step-3-toggle');
+  assert.equal(dom.text('step-2-summary'), '2 elegibles · 1 errores');
+  assert.equal(dom.text('step-2-chip'), 'Lista');
+  assert.equal(isPrimary(dom, 'review-test'), true);
+  assert.equal(isPrimary(dom, 'validate'), false);
+  assert.equal(dom.isVisible('skip-test'), true);
+  assert.equal(dom.text('skip-test'), 'Ir a Envío');
+  assert.equal(isPrimary(dom, 'skip-test'), false);
+
+  const before = dom.calls.length;
+  dom.click('skip-test');
+  assert.equal(dom.calls.length, before, 'Ir a Envío no llama al servidor');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.focusedId(), 'step-4-toggle');
+  assert.equal(dom.MailMergePanel.phase(), 'lista');
+
+  // Guardar de nuevo borra la validación: fase configurada y paso 2 pendiente.
+  dom.click('save');
+  dom.resolve(dom.lastCall('saveConfig'), { sheetId: 202, draftId: 'draft-1', from: 'alias@example.test', replyTo: '', campaignName: 'Otoño 2026' });
+  assert.equal(dom.MailMergePanel.phase(), 'configurada');
+  assert.equal(dom.text('step-2-chip'), 'Pendiente');
+  assert.equal(dom.text('step-2-summary'), '');
+  assert.equal(dom.isVisible('skip-test'), false);
+});
+
+test('AC-56 / D-57: el toggle de un paso cerrado lo abre y el del paso con confirmación viva está deshabilitado', () => {
+  const dom = loaded();
+  assert.equal(dom.byId('step-3-toggle').disabled, false);
+  assert.equal(dom.byId('step-4-toggle').disabled, false);
+
+  assert.equal(dom.click('step-1-toggle'), true);
+  assert.deepEqual(openSteps(dom), [1]);
+  assert.equal(dom.MailMergePanel.phase(), 'configurada', 'el acordeón no cambia la fase');
+
+  withSendConfirmation(dom);
+  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio');
+  assert.equal(dom.byId('step-4-toggle').disabled, true);
+  assert.equal(dom.byId('step-3-toggle').disabled, false);
+  assert.deepEqual(openSteps(dom), [4]);
+
+  const before = dom.calls.length;
+  dom.click('step-1-toggle');
+  assert.deepEqual(openSteps(dom), [1, 4], 'el paso con confirmación viva no se cierra');
+  dom.click('step-2-toggle');
+  assert.deepEqual(openSteps(dom), [2, 4]);
+  assert.equal(dom.click('step-4-toggle'), false, 'toggle deshabilitado');
+  assert.equal(dom.calls.length, before, 'el acordeón no llama al servidor');
+  assert.equal(dom.isVisible('send-confirmation'), true);
+
+  // Con la prueba viva también, su toggle queda deshabilitado.
+  dom.click('step-3-toggle');
+  withTestConfirmation(dom);
+  assert.equal(dom.byId('step-3-toggle').disabled, true);
+  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio', 'el envío vivo precede a la prueba viva');
+  assert.deepEqual(openSteps(dom), [3, 4]);
+});
+
+test('AC-56 / D-56: preparar columnas, bloqueada, revisando-envio, enviando, terminada e incierta se derivan del estado', () => {
+  const cases = [
+    { name: 'preparar-columnas', build: () => validated('setup'), open: [2], primary: 'apply-setup', chips: { 2: 'Preparar' } },
+    { name: 'preparar-columnas', build: () => validated('setup-bloqueado'), open: [2], primary: 'apply-setup', chips: { 2: 'Preparar' } },
+    { name: 'bloqueada', build: () => validated('bloqueada'), open: [2], primary: 'validate', chips: { 2: 'Bloqueada' } },
+    {
+      name: 'lista',
+      build: () => validated('ok'),
+      open: [3],
+      primary: 'review-test',
+      chips: { 1: 'Lista', 2: 'Lista', 3: 'Pendiente', 4: 'Pendiente' },
+    },
+    {
+      name: 'revisando-prueba',
+      build: () => withTestConfirmation(validated('ok')),
+      open: [3],
+      primary: 'execute-test',
+      chips: { 3: 'Revisión' },
+    },
+    {
+      name: 'revisando-envio',
+      build: () => withSendConfirmation(validated('ok')),
+      open: [4],
+      primary: 'execute-send',
+      chips: { 2: 'Lista', 4: 'Revisión' },
+      summaries: { 4: '3 correos' },
+    },
+    {
+      name: 'enviando',
+      build: () => {
+        const dom = withSendConfirmation(validated('ok'));
+        dom.click('execute-send');
+        return dom;
+      },
+      open: [],
+      primary: null,
+      chips: { 4: 'Enviando' },
+      summaries: { 4: '3 correos' },
+      focus: 'console-title',
+    },
+    {
+      name: 'terminada',
+      build: () => finishedSend(),
+      open: [],
+      primary: null,
+      chips: { 4: 'Hecha' },
+      summaries: { 4: '2 correos' },
+      focus: 'console-title',
+    },
+    {
+      name: 'terminada',
+      build: () => {
+        const dom = withTestConfirmation(validated('ok'));
+        dom.click('execute-test');
+        dom.resolve(dom.lastCall('executeTestSend'), views.sendResult('prueba'));
+        return dom;
+      },
+      open: [],
+      primary: null,
+      chips: { 3: 'Hecha', 4: 'Pendiente' },
+      summaries: { 3: 'fila 2 enviada' },
+    },
+    {
+      name: 'incierta',
+      build: () => {
+        const dom = withSendConfirmation(validated('ok'));
+        dom.click('execute-send');
+        dom.fail(dom.lastCall('executeSendPending'), new Error('Se excedió el tiempo máximo de ejecución'));
+        return dom;
+      },
+      open: [],
+      primary: null,
+      chips: {},
+      focus: 'console-title',
+    },
+    {
+      // Rechazo de execute… (ok: false): la fase sale del estado restante y el
+      // paso de origen queda abierto, con foco, junto a su mensaje.
+      name: 'lista',
+      build: () => finishedSend(views.sendResult('rechazo')),
+      open: [4],
+      primary: 'review-test',
+      chips: { 4: 'Pendiente' },
+      focus: 'step-4-toggle',
+    },
+  ];
+  const CANDIDATES = ['save', 'validate', 'apply-setup', 'review-test', 'skip-test', 'execute-test', 'cancel-test', 'review-send', 'execute-send', 'cancel-send', 'close'];
+
+  for (const entry of cases) {
+    const dom = entry.build();
+    const label = `caso ${entry.name}`;
+    assert.equal(dom.MailMergePanel.phase(), entry.name, label);
+    assert.deepEqual(openSteps(dom), entry.open, `${label}: pasos abiertos`);
+    assert.deepEqual(CANDIDATES.filter((id) => isPrimary(dom, id)), entry.primary ? [entry.primary] : [], `${label}: botón primario`);
+    for (const [n, chip] of Object.entries(entry.chips)) {
+      assert.equal(dom.text(`step-${n}-chip`), chip, `${label}: chip del paso ${n}`);
+    }
+    for (const [n, summary] of Object.entries(entry.summaries || {})) {
+      assert.equal(dom.text(`step-${n}-summary`), summary, `${label}: resumen del paso ${n}`);
+    }
+    if (entry.focus) {
+      assert.equal(dom.focusedId(), entry.focus, `${label}: foco`);
+    }
+    // Los botones de envío conservan btn--send; cancelar y cerrar, su clase.
+    assert.ok(dom.byId('execute-send').className.split(' ').includes('btn--send'), `${label}: execute-send`);
+    assert.ok(dom.byId('execute-test').className.split(' ').includes('btn--send'), `${label}: execute-test`);
+    assert.equal(dom.byId('cancel-send').className, 'btn btn--ghost', label);
+    assert.equal(dom.byId('cancel-test').className, 'btn btn--ghost', label);
+    assert.equal(dom.byId('close').className, 'btn btn--ghost btn--sm', label);
+  }
+  // En terminada con filas pendientes, Revisar envío queda como acción secundaria.
+  assert.equal(finishedSend().byId('review-send').className, 'btn');
+});
+
+test('D-56: las fases no cambian disabled de ningún botón respecto de refreshControls', () => {
+  const BUTTONS = ['save', 'validate', 'apply-setup', 'review-test', 'execute-test', 'cancel-test', 'review-send', 'execute-send', 'cancel-send'];
+  // true = deshabilitado, según las reglas de refreshControls() (busy, running,
+  // setupHeaderKey, confirmaciones vivas y canExecute).
+  const IDLE = [false, false, true, false, true, true, false, true, true];
+  const cases = [
+    { phase: 'sin-configurar', build: () => loaded(views.panelState({ current: null })), disabled: IDLE },
+    { phase: 'configurada', build: () => loaded(), disabled: IDLE },
+    { phase: 'preparar-columnas', build: () => validated('setup'), disabled: [false, false, false, false, true, true, false, true, true] },
+    { phase: 'preparar-columnas', build: () => validated('setup-bloqueado'), disabled: IDLE },
+    { phase: 'bloqueada', build: () => validated('bloqueada'), disabled: IDLE },
+    { phase: 'lista', build: () => validated('ok'), disabled: IDLE },
+    {
+      phase: 'revisando-prueba',
+      build: () => withTestConfirmation(validated('ok')),
+      disabled: [false, false, true, true, false, false, false, true, true],
+    },
+    {
+      phase: 'revisando-envio',
+      build: () => withSendConfirmation(validated('ok')),
+      disabled: [false, false, true, false, true, true, true, false, false],
+    },
+    {
+      phase: 'enviando',
+      build: () => {
+        const dom = withSendConfirmation(validated('ok'));
+        dom.click('execute-send');
+        return dom;
+      },
+      disabled: [true, true, true, true, true, true, true, true, true],
+    },
+    { phase: 'terminada', build: () => finishedSend(), disabled: IDLE },
+    {
+      phase: 'incierta',
+      build: () => {
+        const dom = withSendConfirmation(validated('ok'));
+        dom.click('execute-send');
+        dom.fail(dom.lastCall('executeSendPending'), new Error('Sin respuesta'));
+        return dom;
+      },
+      disabled: IDLE,
+    },
+  ];
+
+  for (const entry of cases) {
+    const dom = entry.build();
+    assert.equal(dom.MailMergePanel.phase(), entry.phase);
+    assert.deepEqual(
+      Object.fromEntries(BUTTONS.map((id) => [id, dom.byId(id).disabled])),
+      Object.fromEntries(BUTTONS.map((id, i) => [id, entry.disabled[i]])),
+      `fase ${entry.phase}`
+    );
+  }
+});
+
+test('AC-56 / D-57: cancelar o vencer una confirmación deja abierto el paso de origen con su mensaje', () => {
+  // Cancelar sin resultado previo: vuelve a la fase anterior (lista).
+  const cancelled = withSendConfirmation(validated('ok'));
+  cancelled.click('cancel-send');
+  cancelled.resolve(cancelled.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(cancelled.MailMergePanel.phase(), 'lista');
+  assert.deepEqual(openSteps(cancelled), [4]);
+  assert.equal(cancelled.text('send-message'), 'Confirmación cancelada; no se envió nada.');
+  assert.equal(cancelled.byId('step-4-toggle').disabled, false);
+  assert.equal(cancelled.text('step-4-chip'), 'Pendiente');
+
+  // Cancelar la prueba: el paso 3 queda abierto.
+  const cancelledTest = withTestConfirmation(validated('ok'));
+  cancelledTest.click('cancel-test');
+  cancelledTest.resolve(cancelledTest.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(cancelledTest.MailMergePanel.phase(), 'lista');
+  assert.deepEqual(openSteps(cancelledTest), [3]);
+  assert.equal(cancelledTest.text('test-message'), 'Confirmación cancelada; no se envió nada.');
+
+  // Vencer sin resultado previo: chip Vencida, mensaje y toggle habilitado.
+  const expired = withSendConfirmation(validated('ok'), views.confirmationView('send', 'vencida'));
+  assert.equal(expired.MailMergePanel.phase(), 'revisando-envio');
+  expired.runNextTimer();
+  assert.equal(expired.MailMergePanel.phase(), 'lista');
+  assert.deepEqual(openSteps(expired), [4]);
+  assert.match(expired.text('send-message'), /venció/);
+  assert.equal(expired.text('step-4-chip'), 'Vencida');
+  assert.equal(expired.byId('step-4-toggle').disabled, false);
+
+  // Con un resultado previo, cancelar y vencer vuelven a terminada sin cerrar el paso 4.
+  const again = withSendConfirmation(finishedSend(), views.confirmationView('send'), views.TOKEN_2);
+  assert.equal(again.MailMergePanel.phase(), 'revisando-envio');
+  assert.deepEqual(openSteps(again), [4]);
+  again.click('cancel-send');
+  again.resolve(again.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(again.MailMergePanel.phase(), 'terminada');
+  assert.deepEqual(openSteps(again), [4]);
+  assert.equal(again.text('send-message'), 'Confirmación cancelada; no se envió nada.');
+  assert.equal(again.isVisible('progress-section'), true);
+
+  const expiredAgain = withSendConfirmation(finishedSend(), views.confirmationView('send', 'vencida'), views.TOKEN_2);
+  expiredAgain.runNextTimer();
+  assert.equal(expiredAgain.MailMergePanel.phase(), 'terminada');
+  assert.deepEqual(openSteps(expiredAgain), [4]);
+  assert.match(expiredAgain.text('send-message'), /venció/);
+});
+
+test('AC-61 / D-50: aria-expanded y aria-current se actualizan y el foco sigue al paso abierto', () => {
+  const dom = loaded();
+  const expanded = () => STEP_IDS.map((n) => dom.attribute(`step-${n}-toggle`, 'aria-expanded'));
+  const current = () => STEP_IDS.map((n) => dom.attribute(`rail-${n}`, 'aria-current'));
+  const railClass = (n) => dom.byId(`rail-${n}`).className;
+
+  assert.deepEqual(expanded(), ['false', 'true', 'false', 'false']);
+  assert.deepEqual(current(), [null, 'step', null, null]);
+  assert.equal(railClass(1), 'rail__dot is-done');
+  assert.equal(railClass(2), 'rail__dot is-current');
+  assert.equal(railClass(3), 'rail__dot is-locked');
+  assert.equal(dom.focusedId(), 'step-2-toggle');
+
+  validated('ok', dom);
+  assert.deepEqual(expanded(), ['false', 'false', 'true', 'false']);
+  assert.deepEqual(current(), [null, null, 'step', null]);
+  assert.equal(railClass(2), 'rail__dot is-done');
+  assert.equal(railClass(4), 'rail__dot is-locked');
+  assert.equal(dom.focusedId(), 'step-3-toggle');
+  assert.equal(dom.text('status-live'), 'Paso 3: Prueba');
+
+  // Abrir a mano no mueve el foco ni cambia la etapa del riel.
+  dom.click('step-1-toggle');
+  assert.deepEqual(expanded(), ['true', 'false', 'false', 'false']);
+  assert.deepEqual(current(), [null, null, 'step', null]);
+  assert.equal(dom.focusedId(), 'step-3-toggle');
+  assert.equal(dom.byId('step-1-toggle').className, 'step__toggle is-open');
+  assert.equal(dom.byId('step-3-toggle').className, 'step__toggle');
+
+  // Una confirmación de envío abre el paso 4 con foco y lo marca como actual.
+  withSendConfirmation(dom);
+  assert.deepEqual(expanded(), ['false', 'false', 'false', 'true']);
+  assert.deepEqual(current(), [null, null, null, 'step']);
+  assert.equal(dom.focusedId(), 'step-4-toggle');
+  assert.equal(dom.text('status-live'), 'Confirmación lista: 3 destinatarios');
+
+  // Terminado: la consola recibe el foco y el riel queda completo.
+  dom.click('execute-send');
+  dom.resolve(dom.lastCall('executeSendPending'), views.sendResult('ok'));
+  assert.deepEqual(expanded(), ['false', 'false', 'false', 'false']);
+  assert.deepEqual(current(), [null, null, null, null]);
+  assert.ok(STEP_IDS.every((n) => railClass(n) === 'rail__dot is-done'));
+  assert.equal(dom.focusedId(), 'console-title');
 });
