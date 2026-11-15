@@ -159,6 +159,22 @@
       /* Compuerta de consentimiento */
       .gate { margin: var(--space-3) 0 0; padding: var(--space-1) 10px 10px; border: 1px solid var(--warn); border-radius: var(--radius); min-width: 0; }
       .gate legend { padding: 0 6px; color: var(--warn); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+      .gate .hint { margin-top: 10px; }
+      .gate-status { margin-top: var(--space-1); color: var(--warn); font-size: 12px; font-weight: 600; }
+      .gate-status:empty { display: none; }
+
+      /* Safe Send Review: aviso, resumen en pares, chips y fin de lista */
+      .view .card p.warning { margin: 0; padding-left: 0; border-left: 0; }
+      .pairs { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: var(--space-2) 0 0; font-size: 12px; }
+      .pairs dt { color: var(--muted); }
+      .pairs dd { margin: 0; overflow-wrap: anywhere; }
+      .recipient-line { padding: var(--space-1) var(--space-2); background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); color: var(--text); font-weight: 600; }
+      .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-1) 0; }
+      .chips .chip { flex: 0 1 auto; max-width: 100%; height: auto; min-height: 20px; white-space: normal; overflow-wrap: anywhere; }
+      .view .list-title { margin-top: var(--space-3); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+      .view .list-end { color: var(--muted); font: 11px/1.4 var(--mono); text-align: center; }
+      .expiry { margin-top: var(--space-2); color: var(--muted); font-size: 12px; }
+      .expiry::before { margin-right: var(--space-1); }
 
       /* Consola: progreso y resultados */
       .console__head { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 10px; border-bottom: 1px solid var(--line); }
@@ -336,10 +352,16 @@
           <p id="test-message" class="message" role="status" aria-live="polite"></p>
           <div id="test-confirmation" class="confirmation" hidden>
             <div id="test-view" class="view"></div>
-            <div id="test-consent-box" class="view" hidden>
-              <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
-              <ul id="test-consent-rows"></ul>
-            </div>
+            <fieldset id="test-gate" class="gate" tabindex="-1">
+              <legend>Verificación</legend>
+              <p class="help">Revisá la fila y el destinatario antes de enviar la prueba.</p>
+              <div id="test-consent-box" class="view" hidden>
+                <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
+                <ul id="test-consent-rows"></ul>
+              </div>
+            </fieldset>
+            <p id="test-expiry" class="expiry ic ic--clock"></p>
+            <p id="test-gate-status" class="gate-status"></p>
             <div class="buttons">
               <button type="button" id="execute-test" class="btn btn--primary btn--send" disabled>Enviar prueba</button>
               <button type="button" id="cancel-test" class="btn btn--ghost">Cancelar</button>
@@ -358,18 +380,24 @@
           </button>
         </h2>
         <div id="step-4-body" class="step__body">
-          <p class="card">Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
+          <p id="hint-filter-views" class="card" hidden>Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
           <div class="buttons">
             <button type="button" id="review-send" class="btn">Revisar envío</button>
           </div>
           <p id="send-message" class="message" role="status" aria-live="polite"></p>
           <div id="send-confirmation" class="confirmation" hidden>
             <div id="send-view" class="view"></div>
-            <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
-            <div id="send-consent-box" class="view" hidden>
-              <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
-              <ul id="send-consent-rows"></ul>
-            </div>
+            <fieldset id="send-gate" class="gate" tabindex="-1">
+              <legend>Verificación</legend>
+              <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
+              <div id="send-consent-box" class="view" hidden>
+                <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
+                <ul id="send-consent-rows"></ul>
+              </div>
+              <p id="hint-consent" class="hint" hidden>Al confirmar se reemplazan los valores actuales de las columnas Fecha, Campaña o Detalle de las filas indicadas. Esos valores no se pueden recuperar desde esta herramienta.</p>
+            </fieldset>
+            <p id="send-expiry" class="expiry ic ic--clock"></p>
+            <p id="send-gate-status" class="gate-status"></p>
             <div class="buttons">
               <button type="button" id="execute-send" class="btn btn--primary btn--send" disabled>Enviar correos</button>
               <button type="button" id="cancel-send" class="btn btn--ghost">Cancelar</button>
@@ -476,6 +504,9 @@
             consent: byId('test-consent'),
             consentText: byId('test-consent-text'),
             consentRows: byId('test-consent-rows'),
+            gate: byId('test-gate'),
+            expiry: byId('test-expiry'),
+            gateStatus: byId('test-gate-status'),
             execute: byId('execute-test'),
             cancel: byId('cancel-test')
           },
@@ -487,6 +518,9 @@
             consent: byId('send-consent'),
             consentText: byId('send-consent-text'),
             consentRows: byId('send-consent-rows'),
+            gate: byId('send-gate'),
+            expiry: byId('send-expiry'),
+            gateStatus: byId('send-gate-status'),
             execute: byId('execute-send'),
             cancel: byId('cancel-send')
           }
@@ -613,6 +647,17 @@
           return isNaN(date.getTime()) ? asText(text) : date.toLocaleString();
         }
 
+        // "15:42" (hora local); vacío si la fecha es inválida.
+        function formatTime(iso) {
+          var date = new Date(iso);
+          if (isNaN(date.getTime())) {
+            return '';
+          }
+          var h = date.getHours();
+          var m = date.getMinutes();
+          return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+        }
+
         // --- Habilitación de controles ---------------------------------------
 
         function running() {
@@ -631,6 +676,23 @@
           }
           return (kind !== 'send' || byId('send-filter-ack').checked === true) &&
             (!confirmation.view.consentRequired || confirmUi[kind].consent.checked === true);
+        }
+
+        // Qué compuerta falta para habilitar el envío; vacío sin confirmación
+        // viva o con el botón ya habilitable.
+        function gateStatus(kind) {
+          if (!liveConfirmation(kind)) {
+            return '';
+          }
+          var needAck = kind === 'send' && byId('send-filter-ack').checked !== true;
+          var needConsent = Boolean(state.confirmations[kind].view.consentRequired) && confirmUi[kind].consent.checked !== true;
+          if (needAck && needConsent) {
+            return 'Falta: marcar las 2 casillas';
+          }
+          if (needAck) {
+            return 'Falta: marcar la casilla de filtros';
+          }
+          return needConsent ? 'Falta: marcar el consentimiento' : '';
         }
 
         function refreshControls() {
@@ -656,6 +718,7 @@
             ui.execute.disabled = !canExecute(kind);
             ui.cancel.disabled = !confirmation || confirmation.used || state.busy[kind] || isRunning;
             ui.consent.disabled = !liveConfirmation(kind) || isRunning;
+            setText(ui.gateStatus, gateStatus(kind));
             if (kind === 'send') {
               byId('send-filter-ack').disabled = !liveConfirmation(kind) || isRunning;
             }
@@ -708,7 +771,7 @@
         var SEND_BUTTONS = ['execute-test', 'execute-send'];
         var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
         // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
-        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite'];
+        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent'];
 
         var previousPhase = null;
 
@@ -760,7 +823,12 @@
             setClass(toggle, 'step__toggle', { 'is-open': open });
           });
           if (moveFocus) {
-            focusNode(byId(n <= 4 ? 'step-' + n + '-toggle' : 'console-title'));
+            var target = byId(n <= 4 ? 'step-' + n + '-toggle' : 'console-title');
+            if (n <= 4 && target.disabled) {
+              // Un toggle deshabilitado no recibe el foco: va a la compuerta de la confirmación.
+              target = byId(n === 3 ? 'test-gate' : 'send-gate');
+            }
+            focusNode(target);
           }
         }
 
@@ -928,11 +996,22 @@
               visible.push('hint-overwrite');
             }
           }
+          if (phase === 'revisando-envio') {
+            visible.push('hint-filter-views');
+            if (data.sendView && data.sendView.consentRequired) {
+              visible.push('hint-consent');
+            }
+          }
           return visible;
         }
 
         function renderHints(phase) {
-          var visible = hintsFor(phase, { panel: state.panel, validation: state.lastValidation, result: state.lastResult });
+          var visible = hintsFor(phase, {
+            panel: state.panel,
+            validation: state.lastValidation,
+            result: state.lastResult,
+            sendView: liveConfirmation('send') ? state.confirmations.send.view : null
+          });
           HINT_IDS.forEach(function (id) {
             byId(id).hidden = visible.indexOf(id) === -1;
           });
@@ -1281,20 +1360,36 @@
 
         // --- Confirmaciones (prueba y envío) ----------------------------------
 
+        // Par etiqueta/valor del resumen (lista de definición).
+        function appendPair(pairs, label, value) {
+          var term = document.createElement('dt');
+          term.textContent = label;
+          var detail = document.createElement('dd');
+          detail.textContent = asText(value);
+          pairs.appendChild(term);
+          pairs.appendChild(detail);
+        }
+
         function renderConfirmation(kind, view) {
           var ui = confirmUi[kind];
           clear(ui.view);
-          appendLine(ui.view, view.warning, 'warning');
-          appendLine(ui.view, 'Campaña: ' + asText(view.campaign));
-          appendLine(ui.view, 'Pestaña: ' + asText(view.sheetName));
-          appendLine(ui.view, 'Asunto: ' + asText(view.subject));
-          appendLine(ui.view, 'Remitente: ' + asText(view.from));
-          if (view.replyTo) {
-            appendLine(ui.view, 'Reply-To: ' + asText(view.replyTo));
-          }
+          var card = document.createElement('div');
+          card.className = 'card';
+          appendLine(card, view.warning, 'warning');
+          ui.view.appendChild(card);
           if (kind === 'test') {
-            appendLine(ui.view, 'Para: ' + asText(view.to));
+            appendLine(ui.view, 'Para: ' + asText(view.to), 'recipient-line');
           }
+          var pairs = document.createElement('dl');
+          pairs.className = 'pairs';
+          appendPair(pairs, 'Campaña', view.campaign);
+          appendPair(pairs, 'Pestaña', view.sheetName);
+          appendPair(pairs, 'Asunto', view.subject);
+          appendPair(pairs, 'Remitente', view.from);
+          if (view.replyTo) {
+            appendPair(pairs, 'Reply-To', view.replyTo);
+          }
+          ui.view.appendChild(pairs);
           appendLine(
             ui.view,
             'Filas a enviar: ' + count(view.count) + ' · Con errores (no se envían): ' + count(view.invalidCount) +
@@ -1302,10 +1397,22 @@
           );
           var common = list(view.commonAttachments).map(asText);
           if (common.length > 0) {
-            appendLine(ui.view, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
+            appendLine(ui.view, 'Adjuntos del borrador (para todas las filas)', 'list-title');
+            var chips = document.createElement('div');
+            chips.className = 'chips';
+            common.forEach(function (name) {
+              var chip = document.createElement('span');
+              chip.className = 'chip';
+              chip.textContent = name;
+              chips.appendChild(chip);
+            });
+            ui.view.appendChild(chips);
           }
+          appendLine(ui.view, 'Destinatarios (' + count(view.count) + ')', 'list-title');
           appendList(ui.view, list(view.rows).map(rowLine));
-          appendLine(ui.view, 'La confirmación vence: ' + formatDate(view.expiresAtIso));
+          appendLine(ui.view, '── fin de la lista (' + count(view.count) + ') ──', 'list-end');
+          var time = formatTime(view.expiresAtIso);
+          setText(ui.expiry, time === '' ? 'Vence en 10 min' : 'Vence a las ' + time + ' (10 min)');
 
           ui.consent.checked = false;
           if (kind === 'send') { byId('send-filter-ack').checked = false; }
@@ -1344,6 +1451,7 @@
           ui.consent.checked = false;
           if (kind === 'send') { byId('send-filter-ack').checked = false; }
           clear(ui.view);
+          setText(ui.expiry, '');
         }
 
         // Comodidad: al vencer `expiresAtIso` el botón se deshabilita; el
@@ -1357,6 +1465,8 @@
               return;
             }
             confirmation.expired = true;
+            confirmUi[kind].consent.checked = false;
+            if (kind === 'send') { byId('send-filter-ack').checked = false; }
             showMessage(confirmUi[kind].message, 'La confirmación venció; volvé a revisar.', 'error');
             refreshControls();
           }, delay);
@@ -1580,6 +1690,10 @@
             var lines = list(result.summaryLines).map(asText);
             showMessage(ui.message, lines.length > 0 ? lines.join('\n') : asText(result.stoppedReason) || 'No se envió nada.', 'error');
             refreshControls();
+            setText(
+              el.statusLive,
+              (run.kind === 'test' ? 'Prueba rechazada: ' : 'Envío rechazado: ') + (lines[0] || asText(result.stoppedReason) || 'No se envió nada.')
+            );
             openStep(run.kind === 'test' ? 3 : 4, true); // el motivo queda a la vista
             return;
           }

@@ -576,7 +576,7 @@ test('AC-61 / D-50: aria-expanded y aria-current se actualizan y el foco sigue a
   withSendConfirmation(dom);
   assert.deepEqual(expanded(), ['false', 'false', 'false', 'true']);
   assert.deepEqual(current(), [null, null, null, 'step']);
-  assert.equal(dom.focusedId(), 'step-4-toggle');
+  assert.equal(dom.focusedId(), 'send-gate', 'el foco va a la compuerta: el toggle del paso está deshabilitado');
   assert.equal(dom.text('status-live'), 'Confirmación lista: 3 destinatarios');
 
   // Terminado: la consola recibe el foco y el riel queda completo.
@@ -806,4 +806,220 @@ test('AC-57: revalidar no desprende los elementos estáticos del radar', () => {
   assert.ok(!/clear\(el\.validationResult\)/.test(html), 'validation-result no se vacía');
   assert.ok(!/innerHTML/.test(html));
   assert.equal((html.match(/setTimeout\(/g) || []).length, 2);
+});
+
+// --- Safe Send Review (AC-58) -----------------------------------------------
+
+// Confirmación recién preparada: no marca ninguna casilla (a diferencia de
+// `withSendConfirmation`, que ya tilda la de filtros).
+function preparedSend(dom, view = views.confirmationView('send'), token = views.TOKEN) {
+  dom.click('review-send');
+  dom.resolve(dom.lastCall('prepareSendPending'), { ok: true, errors: [], token, view });
+  return dom;
+}
+
+function preparedTest(dom, view = views.confirmationView('test'), token = views.TEST_TOKEN) {
+  dom.setValue('test-row', '2');
+  dom.click('review-test');
+  dom.resolve(dom.lastCall('prepareTestSend'), { ok: true, errors: [], token, view });
+  return dom;
+}
+
+test('AC-58: la confirmación de envío muestra el aviso, el resumen, la lista completa con fin de lista y las compuertas desmarcadas', () => {
+  const dom = preparedSend(validated('ok'));
+  const view = dom.text('send-view');
+
+  assert.ok(view.includes('Se enviarán 3 correos reales. Esta acción no se puede deshacer.'));
+  assert.ok(view.includes('Otoño 2026'));
+  assert.ok(view.includes('Fila 2 → alpha@example.test: a.pdf'));
+  assert.ok(view.includes('Fila 4 → gamma@example.test: c.pdf, d.pdf'));
+  assert.ok(view.includes('condiciones.pdf'));
+  assert.ok(view.endsWith('── fin de la lista (3) ──'));
+  assert.ok(!/toggle-/.test(/<div id="send-view"[^>]*>([\s\S]*?)<\/div>/.exec(readSidebar())[1]), 'sin grupos colapsables');
+
+  // El fieldset de verificación contiene las casillas, siempre desmarcadas.
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+  assert.equal(dom.byId('send-consent').checked, false);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  assert.equal(dom.text('send-gate-status'), 'Falta: marcar la casilla de filtros');
+  assert.equal(dom.text('test-gate-status'), '');
+  dom.setChecked('send-filter-ack', true);
+  assert.equal(dom.text('send-gate-status'), '');
+  assert.equal(dom.byId('execute-send').disabled, false);
+  dom.setChecked('send-filter-ack', false);
+  assert.equal(dom.text('send-gate-status'), 'Falta: marcar la casilla de filtros');
+  assert.equal(dom.byId('execute-send').disabled, true);
+
+  // Con consentimiento hacen falta las dos casillas.
+  const consent = preparedSend(validated('ok'), views.confirmationView('send', 'consentimiento'));
+  assert.equal(consent.text('send-gate-status'), 'Falta: marcar las 2 casillas');
+  consent.setChecked('send-filter-ack', true);
+  assert.equal(consent.text('send-gate-status'), 'Falta: marcar el consentimiento');
+  assert.equal(consent.byId('execute-send').disabled, true);
+  consent.setChecked('send-consent', true);
+  assert.equal(consent.text('send-gate-status'), '');
+  assert.equal(consent.byId('execute-send').disabled, false);
+  consent.setChecked('send-filter-ack', false);
+  assert.equal(consent.text('send-gate-status'), 'Falta: marcar la casilla de filtros');
+
+  // Sin confirmación viva, el estado de la compuerta queda vacío.
+  consent.click('cancel-send');
+  consent.resolve(consent.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(consent.text('send-gate-status'), '');
+
+  // El resumen se construye solo con createElement + textContent.
+  assert.ok(dom.created.includes('dl'));
+  assert.ok(dom.created.includes('span'), 'los adjuntos comunes son chips');
+});
+
+test('AC-58 / D-53: el vencimiento se muestra como hora fija y al vencer el chip dice Vencida y el toggle se rehabilita', () => {
+  const dom = preparedSend(validated('ok'));
+
+  assert.match(dom.text('send-expiry'), /^Vence a las \d\d:\d\d \(10 min\)$/);
+  assert.ok(!dom.text('send-confirmation').includes('La confirmación vence'));
+  assert.equal(dom.pendingTimers().length, 1, 'un solo temporizador tras preparar');
+  assert.equal(dom.byId('step-4-toggle').disabled, true);
+  dom.setChecked('send-filter-ack', true);
+  assert.equal(dom.byId('execute-send').disabled, false);
+
+  dom.runNextTimer();
+  assert.equal(dom.text('step-4-chip'), 'Vencida');
+  assert.equal(dom.byId('step-4-toggle').disabled, false);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  assert.match(dom.text('send-message'), /venció/);
+  assert.equal(dom.text('send-gate-status'), '');
+  assert.equal(dom.byId('send-filter-ack').checked, false, 'al vencer la casilla queda desmarcada');
+  assert.equal(dom.pendingTimers().length, 0);
+
+  const test = preparedTest(validated('ok'));
+  assert.match(test.text('test-expiry'), /^Vence a las \d\d:\d\d \(10 min\)$/);
+  test.runNextTimer();
+  assert.equal(test.text('step-3-chip'), 'Vencida');
+  assert.equal(test.byId('step-3-toggle').disabled, false);
+  assert.equal(test.byId('execute-test').disabled, true);
+});
+
+test('AC-58 / P0-2 / AC-54 (regresión): las casillas nacen desmarcadas en cada confirmación nueva y el botón conserva el texto Enviar N correos', () => {
+  const dom = preparedSend(validated('ok'), views.confirmationView('send', 'consentimiento'));
+  assert.equal(dom.text('execute-send'), 'Enviar 3 correos');
+  dom.setChecked('send-filter-ack', true);
+  dom.setChecked('send-consent', true);
+  assert.equal(dom.byId('execute-send').disabled, false);
+
+  dom.click('cancel-send');
+  dom.resolve(dom.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+  assert.equal(dom.byId('send-consent').checked, false);
+
+  const single = views.confirmationView('send', 'consentimiento', {
+    count: 1,
+    rows: [{ rowNumber: 2, email: 'alpha@example.test', attachmentNames: [] }],
+  });
+  preparedSend(dom, single, views.TOKEN_2);
+  assert.equal(dom.byId('send-filter-ack').checked, false, 'nace desmarcada');
+  assert.equal(dom.byId('send-consent').checked, false, 'nace desmarcada');
+  assert.equal(dom.byId('execute-send').disabled, true);
+  assert.equal(dom.text('execute-send'), 'Enviar 1 correo');
+  assert.equal(dom.byId('execute-send').className, 'btn btn--primary btn--send');
+  assert.equal(dom.text('send-gate-status'), 'Falta: marcar las 2 casillas');
+
+  // Al vencer también quedan desmarcadas en la confirmación siguiente.
+  dom.setChecked('send-filter-ack', true);
+  dom.setChecked('send-consent', true);
+  dom.runNextTimer();
+  preparedSend(dom, views.confirmationView('send', 'consentimiento'), views.TOKEN);
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+  assert.equal(dom.byId('send-consent').checked, false);
+});
+
+test('AC-58: la confirmación de prueba muestra Para: con la cuenta y su compuerta de consentimiento cuando corresponde', () => {
+  const plain = preparedTest(validated('ok'));
+  assert.ok(plain.text('test-view').includes('Para: ' + views.USER));
+  assert.ok(plain.text('test-view').includes('Se enviará 1 correo a tu cuenta'));
+  assert.ok(plain.text('test-view').endsWith('── fin de la lista (1) ──'));
+  assert.equal(plain.text('execute-test'), 'Enviar prueba');
+  assert.equal(plain.byId('execute-test').className, 'btn btn--primary btn--send');
+  assert.equal(plain.isVisible('test-consent-box'), false);
+  assert.equal(plain.text('test-gate-status'), '');
+  assert.equal(plain.byId('execute-test').disabled, false);
+
+  const consent = preparedTest(validated('ok'), views.confirmationView('test', 'consentimiento'));
+  assert.equal(consent.isVisible('test-consent-box'), true);
+  assert.equal(consent.byId('test-consent').checked, false);
+  assert.equal(consent.byId('execute-test').disabled, true);
+  assert.equal(consent.text('test-gate-status'), 'Falta: marcar el consentimiento');
+  assert.ok(consent.text('test-consent-text').includes('fila 2 (Fecha, Detalle)'));
+  consent.setChecked('test-consent', true);
+  assert.equal(consent.text('test-gate-status'), '');
+  assert.equal(consent.byId('execute-test').disabled, false);
+  assert.equal(consent.text('send-gate-status'), '');
+});
+
+test('AC-58: la confirmación recibe el foco en su compuerta porque el toggle del paso está deshabilitado', () => {
+  const send = preparedSend(validated('ok'));
+  assert.equal(send.byId('step-4-toggle').disabled, true);
+  assert.equal(send.focusedId(), 'send-gate');
+  assert.match(readSidebar(), /<fieldset id="send-gate" class="gate" tabindex="-1">\s*<legend>Verificación<\/legend>/);
+
+  const test = preparedTest(validated('ok'));
+  assert.equal(test.byId('step-3-toggle').disabled, true);
+  assert.equal(test.focusedId(), 'test-gate');
+  assert.match(readSidebar(), /<fieldset id="test-gate" class="gate" tabindex="-1">\s*<legend>Verificación<\/legend>/);
+});
+
+test('AC-58: hint-filter-views se muestra solo en revisando-envio y hint-consent solo con consentRequired', () => {
+  const dom = validated('ok');
+  assert.equal(dom.isVisible('hint-filter-views'), false);
+  assert.equal(dom.isVisible('hint-consent'), false);
+
+  preparedSend(dom);
+  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio');
+  assert.equal(dom.isVisible('hint-filter-views'), true);
+  assert.match(dom.text('hint-filter-views'), /Las vistas de filtro NO excluyen filas del envío\./);
+  assert.equal(dom.isVisible('hint-consent'), false);
+  dom.click('cancel-send');
+  dom.resolve(dom.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(dom.isVisible('hint-filter-views'), false);
+
+  preparedSend(dom, views.confirmationView('send', 'consentimiento'), views.TOKEN_2);
+  assert.equal(dom.isVisible('hint-filter-views'), true);
+  assert.equal(dom.isVisible('hint-consent'), true);
+  assert.match(dom.text('hint-consent'), /no se pueden recuperar desde esta herramienta/);
+  dom.click('cancel-send');
+  dom.resolve(dom.lastCall('cancelConfirmation'), { ok: true });
+  assert.equal(dom.isVisible('hint-filter-views'), false);
+  assert.equal(dom.isVisible('hint-consent'), false);
+});
+
+// --- Observaciones del paso 3: anuncio y rechazo ----------------------------
+
+test('AC-56 / D-57: el rechazo de una prueba vuelve al paso 3 con el motivo', () => {
+  const dom = preparedTest(validated('ok'));
+  dom.click('execute-test');
+  const rejection = views.sendResult('rechazo', { kind: 'test', summaryLines: ['La prueba no se inició: la confirmación venció'] });
+  dom.resolve(dom.lastCall('executeTestSend'), rejection);
+
+  assert.equal(dom.isVisible('step-3-body'), true);
+  assert.equal(dom.text('test-message'), rejection.summaryLines[0]);
+  assert.equal(dom.isVisible('progress-section'), false);
+  assert.equal(dom.focusedId(), 'step-3-toggle');
+  assert.equal(dom.MailMergePanel.phase(), 'lista');
+  assert.equal(dom.byId('step-3-toggle').disabled, false);
+  assert.ok(dom.text('status-live').startsWith('Prueba rechazada'));
+  assert.ok(dom.text('status-live').includes(rejection.summaryLines[0]));
+});
+
+test('AC-56 / D-57: el rechazo de un envío anuncia el motivo en status-live', () => {
+  const dom = preparedSend(validated('ok'));
+  dom.setChecked('send-filter-ack', true);
+  dom.click('execute-send');
+  const rejection = views.sendResult('rechazo');
+  dom.resolve(dom.lastCall('executeSendPending'), rejection);
+
+  assert.ok(dom.text('status-live').startsWith('Envío rechazado'));
+  assert.ok(dom.text('status-live').includes(rejection.summaryLines[0]));
+  assert.equal(dom.text('send-message'), rejection.summaryLines[0]);
+  assert.equal(dom.isVisible('step-4-body'), true);
+  assert.equal(dom.focusedId(), 'step-4-toggle');
+  assert.equal(dom.MailMergePanel.phase(), 'lista');
 });

@@ -643,3 +643,27 @@ test('envoltorios: getPanelState() y saveConfig(input) usan createServices_()', 
   assert.equal(fake.calls.configWrites.length, 1);
   assert.equal(plain(ctx.getPanelState()).current.campaignName, 'Aviso');
 });
+
+test('AC-58: no existe ningún botón de envío fuera de la sección del paso', () => {
+  const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
+
+  // Una sola llamada a cada ejecución, dentro de execute(kind).
+  const body = /function execute\(kind\) \{[\s\S]*?\n        \}\n/.exec(html);
+  assert.ok(body, 'existe execute(kind)');
+  assert.equal((html.match(/\.executeSendPending\(/g) || []).length, 1);
+  assert.equal((html.match(/\.executeTestSend\(/g) || []).length, 1);
+  assert.ok(body[0].includes('.executeSendPending('));
+  assert.ok(body[0].includes('.executeTestSend('));
+
+  // Los únicos botones cuyo texto empieza con "Enviar" son los de los pasos.
+  const sendButtons = [...html.matchAll(/<button\b[^>]*>\s*Enviar[^<]*</g)].map((match) => /id="([^"]+)"/.exec(match[0])[1]);
+  assert.deepEqual(sendButtons.sort(), ['execute-send', 'execute-test']);
+
+  const at = (needle) => {
+    const index = html.indexOf(needle);
+    assert.ok(index >= 0, `falta ${needle}`);
+    return index;
+  };
+  assert.ok(at('id="step-4-body"') < at('id="execute-send"') && at('id="execute-send"') < at('id="progress-section"'));
+  assert.ok(at('id="step-3-body"') < at('id="execute-test"') && at('id="execute-test"') < at('id="section-send"'));
+});
