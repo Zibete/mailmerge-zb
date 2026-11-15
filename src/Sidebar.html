@@ -4,145 +4,370 @@
     <base target="_top">
     <meta charset="utf-8">
     <style>
+      /* Eclipse Console (plan 2026-11-14, D-51, D-53, D-54): tema oscuro fijo,
+         tokens con contraste WCAG AA verificado por test (AC-62), iconos solo
+         en SVG estático o por máscara CSS con data: URI, movimiento solo en
+         CSS y anulado con prefers-reduced-motion. Sin recursos externos. */
+      :root { color-scheme: dark; --bg: #0F1117; --surface: #1A1D24; --surface-2: #22262F; --line: #2A2F3A; --text: #E5E7EB; --muted: #9CA3AF; --accent: #10B981; --accent-ink: #0F1117; --warn: #FBBF24; --danger: #F87171; --focus: #E5E7EB; --radius: 6px; --space-1: 4px; --space-2: 8px; --space-3: 12px; --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+      /* Iconos (D-54): máscaras SVG en data: URI, pintadas con currentColor. */
+      html {
+        --ic-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 11v5M12 8h.01'/%3E%3C/svg%3E");
+        --ic-warn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.5 2.5 20h19L12 3.5z'/%3E%3Cpath d='M12 10v4M12 17h.01'/%3E%3C/svg%3E");
+        --ic-alert: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v6M12 16h.01'/%3E%3C/svg%3E");
+        --ic-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5 10 17 19 7'/%3E%3C/svg%3E");
+        --ic-minus: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E");
+        --ic-dot: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='4.5' fill='black'/%3E%3C/svg%3E");
+        --ic-send: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 3 10 14'/%3E%3Cpath d='M21 3 14.5 21l-4.5-7-7-4.5L21 3z'/%3E%3C/svg%3E");
+        --ic-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3 2'/%3E%3C/svg%3E");
+        --ic-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+        box-sizing: border-box;
+      }
+      *, *::before, *::after { box-sizing: inherit; }
       [hidden] { display: none !important; }
-      body { font-family: Arial, sans-serif; font-size: 13px; margin: 12px; color: #202124; }
-      h2 { font-size: 14px; margin: 0 0 8px; }
-      section { border-bottom: 1px solid #dadce0; padding: 12px 0; }
-      label { display: block; margin-top: 10px; font-weight: bold; }
-      label.consent { font-weight: normal; display: flex; gap: 6px; align-items: flex-start; }
-      label.consent input { width: auto; margin-top: 2px; }
-      select, input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 4px; }
-      .hint { margin: 4px 0 0; color: #5f6368; font-size: 12px; }
-      .buttons { margin-top: 10px; }
-      button { margin: 4px 8px 0 0; padding: 6px 12px; }
-      .message { margin: 8px 0 0; white-space: pre-wrap; }
-      .error { color: #b3261e; }
-      .ok { color: #137333; }
-      .warning { color: #8a4b00; font-weight: bold; }
-      .view p, .view li { margin: 4px 0; word-break: break-word; }
-      .view ul { margin: 4px 0; padding-left: 18px; }
-      .confirmation { margin-top: 8px; padding: 8px; background: #f8f9fa; border: 1px solid #dadce0; }
-      .counters { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 8px 0; }
-      progress { width: 100%; }
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
-      th, td { border: 1px solid #dadce0; padding: 3px; text-align: left; vertical-align: top; word-break: break-word; }
+
+      /* Base */
+      body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
+      h2 { font-size: 13px; font-weight: 600; margin: 0; }
+      p { margin: 0; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .btn--primary:focus-visible { outline-color: var(--focus); }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+      /* Cabecera e identidad (D-52) */
+      .brand { padding: var(--space-3) var(--space-3) 10px; border-bottom: 1px solid var(--line); }
+      .brand__row { display: flex; align-items: center; gap: 10px; }
+      .brand__logo { flex: none; color: var(--accent); }
+      .brand__moon { fill: var(--surface); stroke: currentColor; stroke-opacity: 0.55; }
+      .brand__text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+      .brand__name { font-weight: 600; font-size: 13px; letter-spacing: 0.01em; }
+      .brand__sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; }
+
+      /* Riel de etapa */
+      .rail { position: relative; display: flex; justify-content: space-between; list-style: none; margin: var(--space-3) 2px 0; padding: 0; }
+      .rail::before { content: ""; position: absolute; left: 10px; right: 10px; top: 50%; height: 1px; background: var(--line); }
+      .rail__dot { position: relative; z-index: 1; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 11px/20px var(--mono); text-align: center; font-variant-numeric: tabular-nums; }
+      .rail__dot.is-done { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+      .rail__dot.is-current { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+      .rail__dot.is-locked { opacity: 0.55; }
+
+      /* Pasos (acordeón, D-57) */
+      .steps { padding: 10px; }
+      .step { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin: 0 0 var(--space-2); }
+      .step__head { margin: 0; }
+      .step__toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 40px; padding: 0 10px; margin: 0; background: transparent; border: 0; border-radius: var(--radius); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+      .step__toggle:disabled { cursor: default; }
+      .step__toggle::after { content: ""; flex: none; width: 14px; height: 14px; background-color: var(--muted); -webkit-mask-image: var(--ic-chevron); mask-image: var(--ic-chevron); -webkit-mask-size: contain; mask-size: contain; transform: rotate(-90deg); }
+      .step__toggle[aria-expanded="true"]::after { transform: none; }
+      .step__num { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font: 600 11px/1 var(--mono); font-variant-numeric: tabular-nums; }
+      .step__toggle[aria-expanded="true"] .step__num { border-color: var(--accent); color: var(--accent); }
+      .step__title { flex: none; font-weight: 600; }
+      .step__summary { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .step__body { padding: 10px var(--space-3) var(--space-3); border-top: 1px solid var(--line); }
+
+      /* Formulario */
+      label { display: block; margin-top: 10px; font-size: 12px; font-weight: 600; }
+      label:first-child { margin-top: 0; }
+      select, input { display: block; width: 100%; max-width: 100%; min-height: 32px; margin-top: var(--space-1); padding: 6px 8px; background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); font: inherit; }
+      select:hover, input:hover { border-color: #3A4150; }
+      select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+      select:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
+      label.consent { display: grid; grid-template-columns: 20px 1fr; gap: var(--space-2); align-items: start; margin-top: 10px; font-size: 13px; font-weight: 400; cursor: pointer; overflow-wrap: anywhere; }
+      label.consent input { width: 16px; height: 16px; min-height: 0; margin: 2px; padding: 0; accent-color: var(--accent); cursor: pointer; }
+      .help { margin-top: var(--space-1); color: var(--muted); font-size: 12px; }
+
+      /* Botones */
+      .buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; max-width: 100%; padding: 0 14px; margin: 0; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font: 600 13px/1.2 var(--font); text-align: center; cursor: pointer; }
+      .btn:hover:not(:disabled) { border-color: var(--muted); }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn--primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+      .btn--primary:hover:not(:disabled) { border-color: var(--text); }
+      .btn--ghost { background: transparent; }
+      .btn--danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+      .btn--sm { min-height: 28px; padding: 0 10px; font-size: 12px; }
+      .btn--send { min-height: 44px; flex: 1 1 auto; }
+      .btn--send::before { content: ""; flex: none; width: 16px; height: 16px; background-color: currentColor; -webkit-mask-image: var(--ic-send); mask-image: var(--ic-send); -webkit-mask-size: contain; mask-size: contain; }
+
+      /* Mensajes y vistas que escribe el script */
+      .message { margin-top: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+      .message:empty { margin-top: 0; }
+      .ok { color: var(--accent); }
+      .error { color: var(--danger); }
+      .warning { color: var(--warn); font-weight: 600; }
+      .view p.warning { padding-left: var(--space-2); border-left: 3px solid var(--warn); }
+      .view p, .view li { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+      .view ul { margin: var(--space-1) 0; padding-left: 16px; }
+      .view li { font-size: 12px; font-variant-numeric: tabular-nums; }
+      .view li::marker { color: var(--muted); }
+      .confirmation { margin-top: 10px; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
+
+      /* Primitivas: ayuda, aviso, chip */
+      .hint { display: flex; gap: 6px; align-items: flex-start; margin-top: var(--space-2); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+      .hint::before { content: ""; flex: none; width: 14px; height: 14px; margin-top: 1px; background-color: currentColor; -webkit-mask-image: var(--ic-info); mask-image: var(--ic-info); -webkit-mask-size: contain; mask-size: contain; }
+      .card { margin-top: 10px; padding: var(--space-2) 10px; background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: var(--radius); font-size: 12px; overflow-wrap: anywhere; }
+      .card--danger { border-left-color: var(--danger); }
+      .card__title { display: flex; gap: 6px; align-items: center; color: var(--warn); font-weight: 600; }
+      .card--danger .card__title { color: var(--danger); }
+      .chip { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+      .chip:empty { display: none; }
+      .chip--ok { color: var(--accent); border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.1); }
+      .chip--warn { color: var(--warn); border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.08); }
+      .chip--danger { color: var(--danger); border-color: rgba(248, 113, 113, 0.45); background: rgba(248, 113, 113, 0.08); }
+      .chip--muted { color: var(--muted); }
+      .chip--live { color: var(--accent); border-color: var(--accent); }
+      .chip--live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+      /* Iconos genéricos por máscara (D-54), con respaldo -webkit- */
+      .ic::before { content: ""; display: inline-block; width: 16px; height: 16px; background-color: currentColor; -webkit-mask-image: var(--ic); mask-image: var(--ic); -webkit-mask-size: contain; mask-size: contain; vertical-align: -3px; }
+      .ic--info { --ic: var(--ic-info); }
+      .ic--warn { --ic: var(--ic-warn); }
+      .ic--alert { --ic: var(--ic-alert); }
+      .ic--check { --ic: var(--ic-check); }
+      .ic--send { --ic: var(--ic-send); }
+      .ic--clock { --ic: var(--ic-clock); }
+
+      /* Indicadores: tiles y barra segmentada */
+      .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+      .tile { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; min-width: 0; padding: var(--space-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
+      .tile__value { font: 600 18px/1.15 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+      .tile__label { color: var(--muted); font-size: 11px; line-height: 1.25; text-transform: uppercase; letter-spacing: 0.06em; overflow-wrap: anywhere; }
+      .tile--warn { border-color: var(--warn); }
+      .tile--warn .tile__value { color: var(--warn); }
+      .meter { display: flex; height: 8px; margin-top: 10px; overflow: hidden; border-radius: 4px; background: var(--surface-2); }
+      .meter__seg { flex: 0 0 0; min-width: 0; overflow: hidden; font-size: 0; color: transparent; }
+      .meter__seg + .meter__seg { box-shadow: inset 2px 0 0 var(--surface); }
+      .meter__seg--valid { background: var(--accent); }
+      .meter__seg--invalid { background: var(--danger); }
+      .meter__seg--excluded { background: var(--muted); }
+      .w-0 { flex-grow: 0; } .w-1 { flex-grow: 1; } .w-2 { flex-grow: 2; } .w-3 { flex-grow: 3; } .w-4 { flex-grow: 4; } .w-5 { flex-grow: 5; }
+      .w-6 { flex-grow: 6; } .w-7 { flex-grow: 7; } .w-8 { flex-grow: 8; } .w-9 { flex-grow: 9; } .w-10 { flex-grow: 10; }
+      progress { display: block; width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
+
+      /* Compuerta de consentimiento */
+      .gate { margin: var(--space-3) 0 0; padding: var(--space-1) 10px 10px; border: 1px solid var(--warn); border-radius: var(--radius); min-width: 0; }
+      .gate legend { padding: 0 6px; color: var(--warn); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+
+      /* Consola: progreso y resultados */
+      .console__head { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+      .console__head::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+      .console__body { padding: 10px var(--space-3) var(--space-3); }
+      .console__body > .message:first-child { margin-top: 0; }
+
+      /* Registro por fila: tabla apilada (D-55) */
+      .log { width: 100%; margin-top: var(--space-3); border-collapse: collapse; font-size: 12px; }
+      .log thead { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+      .log tbody { display: block; }
+      .log tr, .log td { display: block; }
+      .log tr { position: relative; min-height: 44px; padding: var(--space-2) var(--space-2) var(--space-2) 76px; border-top: 1px solid var(--line); }
+      .log td { padding: 0; overflow-wrap: anywhere; }
+      .log td:nth-child(1) { position: absolute; left: var(--space-2); top: var(--space-2); width: 64px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+      .log td:nth-child(1)::before { content: "Fila "; color: var(--muted); }
+      .log td:nth-child(2) { color: var(--text); }
+      .log td:nth-child(3) { display: inline-flex; align-items: center; gap: var(--space-1); width: fit-content; max-width: 100%; margin: 2px 0; padding: 0 var(--space-2); min-height: 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 600; }
+      .log td:nth-child(3):empty { display: none; }
+      .log td:nth-child(3)::before { content: ""; flex: none; width: 12px; height: 12px; background-color: currentColor; -webkit-mask-image: var(--ic-dot); mask-image: var(--ic-dot); -webkit-mask-size: contain; mask-size: contain; }
+      .log td:nth-child(4) { color: var(--muted); }
+      .row--sent td:nth-child(3) { color: var(--accent); border-color: rgba(16, 185, 129, 0.45); }
+      .row--sent td:nth-child(3)::before { -webkit-mask-image: var(--ic-check); mask-image: var(--ic-check); }
+      .row--skipped td:nth-child(3), .row--notsent td:nth-child(3) { color: var(--muted); }
+      .row--skipped td:nth-child(3)::before, .row--notsent td:nth-child(3)::before { -webkit-mask-image: var(--ic-minus); mask-image: var(--ic-minus); }
+      .row--sending td:nth-child(3) { color: var(--warn); border-color: rgba(251, 191, 36, 0.45); }
+      .row--review td:nth-child(3) { color: var(--danger); border-color: rgba(248, 113, 113, 0.45); }
+      .row--review td:nth-child(3)::before { -webkit-mask-image: var(--ic-alert); mask-image: var(--ic-alert); }
+      .row--neutral td:nth-child(3) { color: var(--muted); }
+
+      /* Movimiento (D-53): solo CSS, solo sin preferencia de movimiento reducido */
+      @keyframes pulse {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+        50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .btn, .chip, select, input, .rail__dot { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease; }
+        .step__body { transition: opacity 0.15s ease; }
+        .step__toggle::after { transition: transform 0.15s ease; }
+        .rail__dot.is-current { animation: pulse 2s ease-in-out infinite; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { transition: none !important; animation: none !important; }
+      }
     </style>
   </head>
   <body>
-    <section id="section-campaign">
-      <h2>Campaña</h2>
-      <label for="sheet">Pestaña de la campaña</label>
-      <select id="sheet"></select>
-
-      <label for="draft">Borrador de Gmail (plantilla)</label>
-      <select id="draft"></select>
-
-      <label for="from">Remitente</label>
-      <select id="from"></select>
-      <p class="hint">Tu cuenta o uno de tus alias de Gmail.</p>
-
-      <label for="reply-to">Reply-To (opcional)</label>
-      <input id="reply-to" type="text" autocomplete="off" spellcheck="false">
-      <p class="hint">Una sola dirección. Dejalo vacío para responder al remitente.</p>
-
-      <label for="campaign-name">Nombre de campaña (opcional)</label>
-      <input id="campaign-name" type="text" autocomplete="off" maxlength="80">
-      <p class="hint">Si lo dejás vacío se genera un ID por envío.</p>
-
-      <div class="buttons">
-        <button type="button" id="save" disabled>Guardar</button>
-      </div>
-      <p id="config-message" class="message" role="status" aria-live="polite"></p>
-    </section>
-
-    <section id="section-validation">
-      <h2>Validación</h2>
-      <p class="hint">Revisa la campaña sin enviar ni escribir nada.</p>
-      <div class="buttons">
-        <button type="button" id="validate">Validar</button>
-      </div>
-      <p id="validation-message" class="message" role="status" aria-live="polite"></p>
-      <div id="validation-result" class="view" hidden></div>
-      <div id="setup-box" class="confirmation view" hidden>
-        <p class="warning">La pestaña necesita preparar sus columnas antes de enviar.</p>
-        <div id="setup-list"></div>
-        <div class="buttons">
-          <button type="button" id="apply-setup" disabled>Preparar columnas</button>
+    <header class="brand">
+      <div class="brand__row">
+        <svg class="brand__logo" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true" focusable="false">
+          <path d="M12 21A9 9 0 0 1 5.64 5.64" stroke-opacity="0.3"/>
+          <path d="M5.64 5.64A9 9 0 1 1 12 21"/>
+          <circle class="brand__moon" cx="10.6" cy="12.4" r="5.6"/>
+          <circle cx="18.4" cy="5.6" r="1.3" fill="currentColor" stroke="none"/>
+        </svg>
+        <div class="brand__text">
+          <span class="brand__name">Mail Merge ZB</span>
+          <span class="brand__sub">Eclipse Console</span>
         </div>
+        <button type="button" id="close" class="btn btn--ghost btn--sm">Cerrar</button>
       </div>
-    </section>
+      <ol id="rail" class="rail" aria-label="Etapas de la campaña">
+        <li id="rail-1" class="rail__dot"><span aria-hidden="true">1</span><span class="sr-only">Campaña</span></li>
+        <li id="rail-2" class="rail__dot"><span aria-hidden="true">2</span><span class="sr-only">Validación</span></li>
+        <li id="rail-3" class="rail__dot"><span aria-hidden="true">3</span><span class="sr-only">Prueba</span></li>
+        <li id="rail-4" class="rail__dot"><span aria-hidden="true">4</span><span class="sr-only">Envío</span></li>
+      </ol>
+    </header>
 
-    <section id="section-test">
-      <h2>Prueba</h2>
-      <label for="test-row">Fila a probar</label>
-      <input id="test-row" type="number" min="2" step="1" inputmode="numeric">
-      <p class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
-      <div class="buttons">
-        <button type="button" id="review-test">Revisar prueba</button>
-      </div>
-      <p id="test-message" class="message" role="status" aria-live="polite"></p>
-      <div id="test-confirmation" class="confirmation" hidden>
-        <div id="test-view" class="view"></div>
-        <div id="test-consent-box" class="view" hidden>
-          <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
-          <ul id="test-consent-rows"></ul>
-        </div>
-        <div class="buttons">
-          <button type="button" id="execute-test" disabled>Enviar prueba</button>
-          <button type="button" id="cancel-test">Cancelar</button>
-        </div>
-      </div>
-    </section>
+    <main class="steps">
+      <section class="step" id="section-campaign">
+        <h2 class="step__head">
+          <button type="button" id="step-1-toggle" class="step__toggle" aria-expanded="true" aria-controls="step-1-body">
+            <span class="step__num">1</span>
+            <span class="step__title">Campaña</span>
+            <span id="step-1-summary" class="step__summary"></span>
+            <span id="step-1-chip" class="chip"></span>
+          </button>
+        </h2>
+        <div id="step-1-body" class="step__body">
+          <label for="sheet">Pestaña de la campaña</label>
+          <select id="sheet"></select>
 
-    <section id="section-send">
-      <h2>Envío</h2>
-      <p class="hint">Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
-      <div class="buttons">
-        <button type="button" id="review-send">Revisar envío</button>
-      </div>
-      <p id="send-message" class="message" role="status" aria-live="polite"></p>
-      <div id="send-confirmation" class="confirmation" hidden>
-        <div id="send-view" class="view"></div>
-        <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
-        <div id="send-consent-box" class="view" hidden>
-          <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
-          <ul id="send-consent-rows"></ul>
-        </div>
-        <div class="buttons">
-          <button type="button" id="execute-send" disabled>Enviar correos</button>
-          <button type="button" id="cancel-send">Cancelar</button>
-        </div>
-      </div>
-    </section>
+          <label for="draft">Borrador de Gmail (plantilla)</label>
+          <select id="draft"></select>
 
-    <section id="progress-section" hidden>
-      <h2>Progreso y resultados</h2>
-      <p id="progress-status" class="message" role="status" aria-live="polite"></p>
-      <div class="counters">
-        <span>Total</span><span id="count-total">0</span>
-        <span>Procesadas</span><span id="count-processed">0</span>
-        <span>Aceptadas por Gmail</span><span id="count-sent">0</span>
-        <span>Omitidas</span><span id="count-skipped">0</span>
-        <span>Para revisar</span><span id="count-review">0</span>
-        <span>Pendientes</span><span id="count-pending">0</span>
-      </div>
-      <p class="hint">Una fila aceptada por Gmail puede quedar además para revisar (por ejemplo, si se desplazó).</p>
-      <progress id="progress-bar" max="1" value="0"></progress>
-      <p id="progress-guidance" class="message error" hidden></p>
-      <p id="stopped-reason" class="message error" hidden></p>
-      <div id="summary" class="view"></div>
-      <p id="progress-truncated" class="hint" hidden>Se muestran solo las últimas filas; el resultado final las incluye todas.</p>
-      <table>
-        <thead>
-          <tr><th>Fila</th><th>Destinatario</th><th>Resultado</th><th>Detalle</th></tr>
-        </thead>
-        <tbody id="results-body"></tbody>
-      </table>
-    </section>
+          <label for="from">Remitente</label>
+          <select id="from"></select>
+          <p class="help">Tu cuenta o uno de tus alias de Gmail.</p>
 
-    <div class="buttons">
-      <button type="button" id="close">Cerrar</button>
-    </div>
+          <label for="reply-to">Reply-To (opcional)</label>
+          <input id="reply-to" type="text" autocomplete="off" spellcheck="false">
+          <p class="help">Una sola dirección. Dejalo vacío para responder al remitente.</p>
+
+          <label for="campaign-name">Nombre de campaña (opcional)</label>
+          <input id="campaign-name" type="text" autocomplete="off" maxlength="80">
+          <p class="help">Si lo dejás vacío se genera un ID por envío.</p>
+
+          <div class="buttons">
+            <button type="button" id="save" class="btn btn--primary" disabled>Guardar</button>
+          </div>
+          <p id="config-message" class="message" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="step" id="section-validation">
+        <h2 class="step__head">
+          <button type="button" id="step-2-toggle" class="step__toggle" aria-expanded="true" aria-controls="step-2-body">
+            <span class="step__num">2</span>
+            <span class="step__title">Validación</span>
+            <span id="step-2-summary" class="step__summary"></span>
+            <span id="step-2-chip" class="chip"></span>
+          </button>
+        </h2>
+        <div id="step-2-body" class="step__body">
+          <p class="hint">Revisa la campaña sin enviar ni escribir nada.</p>
+          <div class="buttons">
+            <button type="button" id="validate" class="btn">Validar</button>
+          </div>
+          <p id="validation-message" class="message" role="status" aria-live="polite"></p>
+          <div id="validation-result" class="view" hidden></div>
+          <div id="setup-box" class="confirmation view" hidden>
+            <p class="warning">La pestaña necesita preparar sus columnas antes de enviar.</p>
+            <div id="setup-list"></div>
+            <div class="buttons">
+              <button type="button" id="apply-setup" class="btn" disabled>Preparar columnas</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="section-test">
+        <h2 class="step__head">
+          <button type="button" id="step-3-toggle" class="step__toggle" aria-expanded="true" aria-controls="step-3-body">
+            <span class="step__num">3</span>
+            <span class="step__title">Prueba</span>
+            <span id="step-3-summary" class="step__summary"></span>
+            <span id="step-3-chip" class="chip"></span>
+          </button>
+        </h2>
+        <div id="step-3-body" class="step__body">
+          <label for="test-row">Fila a probar</label>
+          <input id="test-row" type="number" min="2" step="1" inputmode="numeric">
+          <p class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
+          <div class="buttons">
+            <button type="button" id="review-test" class="btn">Revisar prueba</button>
+          </div>
+          <p id="test-message" class="message" role="status" aria-live="polite"></p>
+          <div id="test-confirmation" class="confirmation" hidden>
+            <div id="test-view" class="view"></div>
+            <div id="test-consent-box" class="view" hidden>
+              <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
+              <ul id="test-consent-rows"></ul>
+            </div>
+            <div class="buttons">
+              <button type="button" id="execute-test" class="btn btn--primary btn--send" disabled>Enviar prueba</button>
+              <button type="button" id="cancel-test" class="btn btn--ghost">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step" id="section-send">
+        <h2 class="step__head">
+          <button type="button" id="step-4-toggle" class="step__toggle" aria-expanded="true" aria-controls="step-4-body">
+            <span class="step__num">4</span>
+            <span class="step__title">Envío</span>
+            <span id="step-4-summary" class="step__summary"></span>
+            <span id="step-4-chip" class="chip"></span>
+          </button>
+        </h2>
+        <div id="step-4-body" class="step__body">
+          <p class="card">Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
+          <div class="buttons">
+            <button type="button" id="review-send" class="btn">Revisar envío</button>
+          </div>
+          <p id="send-message" class="message" role="status" aria-live="polite"></p>
+          <div id="send-confirmation" class="confirmation" hidden>
+            <div id="send-view" class="view"></div>
+            <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
+            <div id="send-consent-box" class="view" hidden>
+              <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
+              <ul id="send-consent-rows"></ul>
+            </div>
+            <div class="buttons">
+              <button type="button" id="execute-send" class="btn btn--primary btn--send" disabled>Enviar correos</button>
+              <button type="button" id="cancel-send" class="btn btn--ghost">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="step console" id="progress-section" hidden>
+        <div class="console__head">
+          <h2 id="console-title" tabindex="-1">Progreso y resultados</h2>
+        </div>
+        <div class="console__body">
+          <p id="progress-status" class="message" role="status" aria-live="polite"></p>
+          <div class="tiles">
+            <div class="tile"><span class="tile__label">Total</span><span id="count-total" class="tile__value">0</span></div>
+            <div class="tile"><span class="tile__label">Procesadas</span><span id="count-processed" class="tile__value">0</span></div>
+            <div class="tile"><span class="tile__label">Aceptadas por Gmail</span><span id="count-sent" class="tile__value">0</span></div>
+            <div class="tile"><span class="tile__label">Omitidas</span><span id="count-skipped" class="tile__value">0</span></div>
+            <div class="tile"><span class="tile__label">Para revisar</span><span id="count-review" class="tile__value">0</span></div>
+            <div class="tile"><span class="tile__label">Pendientes</span><span id="count-pending" class="tile__value">0</span></div>
+          </div>
+          <p class="hint">Una fila aceptada por Gmail puede quedar además para revisar (por ejemplo, si se desplazó).</p>
+          <progress id="progress-bar" max="1" value="0"></progress>
+          <p id="progress-guidance" class="message error" hidden></p>
+          <p id="stopped-reason" class="message error" hidden></p>
+          <div id="summary" class="view"></div>
+          <p id="progress-truncated" class="hint" hidden>Se muestran solo las últimas filas; el resultado final las incluye todas.</p>
+          <table class="log">
+            <thead>
+              <tr><th>Fila</th><th>Destinatario</th><th>Resultado</th><th>Detalle</th></tr>
+            </thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
 
     <script>
       // Panel único de Mail Merge (plan V2, "Detalle del código > Sidebar").

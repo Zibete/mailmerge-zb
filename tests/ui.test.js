@@ -138,6 +138,40 @@ test('AC-32: src/Sidebar.html no usa innerHTML ni alert, confirm o prompt', () =
   assert.doesNotMatch(html, /\b(alert|confirm|prompt)\s*\(/);
 });
 
+// --- AC-63: Eclipse Console sin temporizadores nuevos ni recursos externos --
+
+test('AC-63 / D-53: src/Sidebar.html no usa setInterval, requestAnimationFrame ni más de un setTimeout encadenado nuevo', () => {
+  const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
+
+  assert.equal(html.includes('setInterval'), false);
+  assert.equal(html.includes('requestAnimationFrame'), false);
+  // Exactamente dos: el vencimiento de la confirmación y el sondeo (D-29).
+  assert.equal(html.split('setTimeout(').length - 1, 2);
+});
+
+test('AC-63 / D-54: src/Sidebar.html no carga recursos externos ni define svg con id', () => {
+  const html = fs.readFileSync(path.join(SRC_DIR, 'Sidebar.html'), 'utf8');
+
+  const scripts = [...html.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/gi)];
+  assert.equal(scripts.length, 1, 'un solo <script>');
+  const outside = html.replace(scripts[0][0], '');
+  for (const forbidden of ['<link', '@import', 'url(http', 'url("http', "url('http", 'src=']) {
+    assert.equal(outside.includes(forbidden), false, `contiene ${forbidden} fuera del <script>`);
+  }
+  assert.doesNotMatch(scripts[0][0], /<script\b[^>]*\ssrc\s*=/i);
+  assert.doesNotMatch(html, /<svg[^>]*\sid=/i);
+
+  const styles = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)];
+  assert.equal(styles.length, 1, 'un solo <style>');
+  const css = styles[0][1];
+  const root = /:root\s*\{([^}]*)\}/.exec(css);
+  assert.ok(root, 'el <style> define :root');
+  assert.match(root[1], /color-scheme:\s*dark\s*;/);
+  assert.doesNotMatch(html, /<meta\s+name="color-scheme"/i);
+  assert.ok(css.includes('[hidden] { display: none !important; }'));
+  assert.ok(css.includes('prefers-reduced-motion'));
+});
+
 test('AC-32: onOpen agrega solo "Abrir Mail Merge" y no usa servicios de datos', () => {
   const accessed = [];
   const menus = [];
