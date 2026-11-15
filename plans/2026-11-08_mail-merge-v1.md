@@ -336,7 +336,7 @@ Registro de lo que concluyó la due diligence del 2026-11-08 sobre los hechos ex
 
 Convenciones comunes a todos los pasos:
 
-- Node portable en el PATH solo del proceso (Git Bash): `export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH"`. Todos los comandos se ejecutan desde la raíz del proyecto. Sin `npm install`, sin `package.json`.
+- Node portable en el PATH solo del proceso (Git Bash): `export PATH="/ruta/a/node:$PATH"`. Todos los comandos se ejecutan desde la raíz del proyecto. Sin `npm install`, sin `package.json`.
 - Los archivos de `src/` son scripts globales de Apps Script: sin `module.exports`, sin `require`, solo declaraciones de funciones y constantes en el nivel superior. Los archivos de `tests/` sí son CommonJS de Node.
 - Los títulos de los tests incluyen el ID que cubren (`AC-xx`, `D-xx`, `R-xx`) para la trazabilidad de `docs/ACCEPTANCE_STATUS.md`.
 - Los helpers de test no se nombran `test-*.js` ni `*.test.js` (el descubrimiento por defecto de `node --test` los ejecutaría como tests).

@@ -4,12 +4,14 @@
 
 Las reglas de ingeniería, idioma, límite local y seguridad están en `AGENTS.md` (importado arriba). Este archivo solo agrega lo propio de Claude Code.
 
-## Node portable
+## Node.js para las pruebas
 
-Node no está en el PATH del sistema. Anteponerlo solo en el comando que lo usa (el estado del shell no persiste entre llamadas); no modificar el PATH permanente ni instalar otra versión.
+Usar Node.js 20 o superior. Si `node` ya está disponible en el `PATH`, ejecutar `node --test` desde la raíz del repositorio (Git Bash o PowerShell). Si se usa una instalación portable, agregar **su directorio** al `PATH` únicamente en la sesión actual, sin instalar dependencias ni modificar la configuración permanente del equipo.
 
-- Git Bash: `export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH" && node --test`
-- PowerShell: `$env:Path = "C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64;$env:Path"; node --test`
+- Git Bash (ejemplo): `export PATH="/ruta/a/node:$PATH" && node --test`
+- PowerShell (ejemplo): `$env:Path = "C:\ruta\a\node;$env:Path"; node --test`
+
+Las rutas de los ejemplos son marcadores de posición: reemplazarlas por el directorio real donde esté `node.exe`.
 
 ## Skills de `spec-driven-dev`
 

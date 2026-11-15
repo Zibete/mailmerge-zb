@@ -5,9 +5,9 @@ Fuente principal de las reglas de ingeniería del proyecto, para cualquier agent
 ## Estado del proyecto
 
 - **V2 implementada y verificada localmente (`LOCAL_VERIFIED`)**: panel lateral único, columnas gestionadas `Fecha`, `Campaña`, `Resultado` y `Detalle`, "Preparar columnas" y confirmación por token. Código en `src/`, tests offline en `tests/`, plan ejecutado en `plans/2026-11-09_mail-merge-v2.md` (evoluciona la V1 de `plans/2026-11-08_mail-merge-v1.md`).
-- **Interfaz Eclipse Console (2026-11-14)**: `plans/2026-11-14_eclipse-console-ui.md` es el diseño vigente de la interfaz de la sidebar (identidad, acordeón, radar, compuertas, consola y ayudas; D-49 a D-60) y reemplaza en lo visual la sección "Detalle del código > Sidebar" del plan V2. Sigue en `LOCAL_VERIFIED`: la vista previa local (`tools/preview-sidebar.js`) y el render real en Apps Script siguen pendientes de ejecución (AC-64 y ítems 22 a 26 de `docs/OPERATIONS.md`).
-- **Pendiente en Google (`PENDING LIVE VALIDATION`)**: ni la V1 ni la V2 se instalaron, autorizaron ni ejecutaron en Apps Script, Gmail ni Drive. No declarar `LIVE_VERIFIED` sin resultados reales de los controles de `docs/OPERATIONS.md`.
-- No repetir los planes ejecutados. El trabajo posterior es mantenimiento, auditoría, correcciones y preparación de un piloto controlado.
+- **Interfaz Eclipse Console (2026-11-14)**: `plans/2026-11-14_eclipse-console-ui.md` es el plan de diseño de la interfaz de la sidebar (D-49 a D-60), actualizado por las decisiones D-61 a D-63 (identidad pública y textos compactos) y reemplaza en lo visual la sección "Detalle del código > Sidebar" del plan V2. La regresión automatizada sigue en `LOCAL_VERIFIED`; el responsable reportó una primera prueba real en Sheets el 2026-11-15, y el responsable aprobó la interfaz visual y reportó envíos reales. Siguen pendientes los escenarios no documentados de AC-64 y de los ítems 22 a 26 de `docs/OPERATIONS.md`.
+- **Pendiente en Google (`PENDING LIVE VALIDATION`)**: el responsable informó `clasp push` y envíos reales el 2026-11-15, pero no se documentaron resultados suficientes para cerrar todos los controles de `docs/OPERATIONS.md`. No declarar `LIVE_VERIFIED` integral sin esa evidencia.
+- No repetir los planes ejecutados. El trabajo posterior es mantenimiento, auditoría, correcciones y registro de los resultados del piloto. El código se distribuye bajo licencia MIT (`LICENSE`); la verificación en Google continúa pendiente.
 - Para el resultado actual de los tests, ejecutar la suite; `docs/ACCEPTANCE_STATUS.md` registra la evidencia del cierre de la V2.
 
 ## Idioma
@@ -19,11 +19,11 @@ Trabajo, documentación y comunicación en **español**: análisis, planes, docu
 - Mantener un mail merge **pequeño** sobre Google Sheets, borradores de Gmail, Drive y Apps Script V8: configurar campaña, validar, enviar una prueba, confirmar envíos pendientes y ver los resultados en las columnas `Resultado` y `Detalle` de la pestaña de la campaña.
 - Sin servidores, aplicación web, bases de datos externas, CRM, tracking, automatización de marketing, programación de campañas, respuestas automáticas, rediseños de interfaz fuera de la especificación, reintentos automáticos de envíos dudosos, dependencias ni capas de arquitectura sin necesidad verificada.
 - Fuentes vigentes: `docs/PRODUCT.md` (producto), `plans/2026-11-09_mail-merge-v2.md` (diseño implementado vigente), `plans/2026-11-14_eclipse-console-ui.md` (diseño vigente de la interfaz de la sidebar), `plans/2026-11-08_mail-merge-v1.md` (diseño V1, vigente salvo lo que la V2 reemplaza), `docs/DECISIONS.md` (decisiones), `docs/OPERATIONS.md` (operación), `docs/ACCEPTANCE_STATUS.md` (verificación).
-- Insumos históricos, que no prevalecen sobre decisiones posteriores: `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md` y `docs/ENGINEERING_PLAYBOOK.md`. `docs/REFERENCE_AUDIT.md` es investigación, no código para copiar. `PROMPT_CLAUDE_CODE.md` es el pedido de arranque: no ejecutarlo.
+- Insumos históricos, que no prevalecen sobre decisiones posteriores: `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md` y `docs/ENGINEERING_PLAYBOOK.md`. `docs/REFERENCE_AUDIT.md` es investigación, no código para copiar. El prompt de arranque V1 se retiró por obsoleto; no volver a ejecutar instrucciones de bootstrap.
 
 ## Límite local y autorización (obligatorio)
 
-- **Git exclusivamente local**: ramas y commits locales; sin remotos, push, PR, publicaciones ni releases.
+- **Git local por defecto**: ramas y commits locales. Sin crear remotos, push, PR, publicaciones ni releases hasta recibir autorización explícita del responsable para esa acción y el repositorio de destino.
 - **Sin cuentas ni recursos reales de Google** por defecto: nada de `clasp login`/`push`/`deploy`/`run`, OAuth, envíos de correo (ni de prueba), cambios en Drive u otras acciones externas sin una **autorización explícita nueva** que delimite cuenta, hoja, destinatarios y acciones permitidas.
 - Lectura de documentación pública permitida. No subir archivos del proyecto, datos reales ni secretos a terceros, ni modificar recursos externos.
 - No editar archivos fuera del proyecto.
@@ -49,7 +49,7 @@ Trabajo, documentación y comunicación en **español**: análisis, planes, docu
 
 ## Verificación
 
-Node.js v20.11.1 portable, sin dependencias ni `npm install`; los comandos están en `README.md` ("Verificación local").
+Node.js 20 o superior (portable si hace falta), sin dependencias ni `npm install`; los comandos están en `README.md` ("Verificación local").
 
 - Tests offline: `node --test` (archivos `*.test.js`). Los títulos de los tests conservan los IDs `R-xx`, `AC-xx` y `D-xx` para la trazabilidad con el plan y `docs/ACCEPTANCE_STATUS.md`.
 - Sintaxis: `node --check` sobre cada `.js` modificado.

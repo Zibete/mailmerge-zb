@@ -1,22 +1,22 @@
-# Mail Merge ZB — Eclipse Console
+# Mail Merge ZB
 
 Herramienta pequeña de **combinación de correspondencia** en **Google Apps Script V8**: envía mensajes personalizados desde una hoja de cálculo de Google Sheets, usando un borrador de Gmail como plantilla y adjuntos de Google Drive. Reproduce el flujo esencial de un complemento de Mail Merge, sin convertirse en una plataforma de marketing. Se instala como **script vinculado** a tu propia hoja (no es un complemento de Marketplace).
 
 ## Identidad del producto
 
-Dentro del panel lateral el producto se presenta como **Mail Merge ZB — Eclipse Console**: un panel oscuro de 300 px con un riel de etapas y cuatro pasos (campaña, validación, prueba y envío). Por fuera nada cambia: el menú de Sheets sigue siendo **Mail Merge → Abrir Mail Merge**, el título del panel es `Mail Merge` y el archivo es `src/Sidebar.html`. El diseño está en [`plans/2026-11-14_eclipse-console-ui.md`](plans/2026-11-14_eclipse-console-ui.md) (D-49 a D-60).
+Dentro del panel lateral el producto se presenta como **Mail Merge ZB — Envío desde Google Sheets**: un panel oscuro de 300 px con un riel de etapas y cuatro pasos (campaña, validación, prueba y envío). Por fuera nada cambia: el menú de Sheets sigue siendo **Mail Merge → Abrir Mail Merge**, el título del panel es `Mail Merge` y el archivo es `src/Sidebar.html`. El diseño está en [`plans/2026-11-14_eclipse-console-ui.md`](plans/2026-11-14_eclipse-console-ui.md) (D-49 a D-60).
 
 ## Estado
 
 | Aspecto | Estado |
 |---|---|
 | Implementación de V2 | **Completada** según `plans/2026-11-09_mail-merge-v2.md`, en commits locales (sobre la V1 de `plans/2026-11-08_mail-merge-v1.md`) |
-| Interfaz Eclipse Console | **Implementada** según `plans/2026-11-14_eclipse-console-ui.md` (criterios AC-56 a AC-63 con tests offline sobre un DOM falso; AC-64, la revisión visual en un navegador, queda `PENDING (manual)`) |
-| Tests offline (lógica y adaptadores simulados) | **366/366 aprobados** el 2026-11-15; ejecutar `node --test` para el estado actual |
-| Integración con Apps Script, Gmail y Drive | **`PENDING LIVE VALIDATION`** |
-| Instalación, OAuth y envíos reales | **No realizados** |
+| Interfaz del panel (rediseño interno «Eclipse Console») | **Implementada** según `plans/2026-11-14_eclipse-console-ui.md` (criterios AC-56 a AC-63 con tests offline sobre un DOM falso; AC-64, aceptación visual completa del responsable, queda `PENDING (manual)` (smoke test automatizado de nueve estados en Chromium aprobado)) |
+| Tests offline (lógica y adaptadores simulados) | **380/380 aprobados** el 2026-11-15 (Node.js v22, mocks y tests de la vista previa); ejecutar `node --test` para verificar en tu equipo |
+| Integración con Apps Script, Gmail y Drive | **Piloto real reportado por el responsable; checklist integral pendiente** |
+| Instalación, OAuth y envíos reales | **`clasp push` y envíos reales reportados por el responsable (2026-11-15); resultados de la checklist de aceptación aún por registrar** |
 
-**Nivel alcanzado: `LOCAL_VERIFIED`, no `LIVE_VERIFIED`.** Los tests offline no reemplazan una prueba real en Google. El render del panel dentro de Sheets (ítems 22 a 26 de la checklist) tampoco se vio todavía. La evidencia por criterio está en [`docs/ACCEPTANCE_STATUS.md`](docs/ACCEPTANCE_STATUS.md).
+**Nivel alcanzado: `LOCAL_VERIFIED`, no `LIVE_VERIFIED`.** Los tests offline no reemplazan una prueba real en Google. El responsable confirmó haber visto el panel actualizado en Sheets y realizado envíos reales; siguen pendientes las comprobaciones detalladas de los ítems 22 a 26 (especialmente lectores de pantalla, lista de 500 filas y render en diferentes condiciones). La evidencia por criterio está en [`docs/ACCEPTANCE_STATUS.md`](docs/ACCEPTANCE_STATUS.md).
 
 ## Qué hace
 
@@ -53,7 +53,7 @@ El uso detallado, la conciliación, el envío por tandas y los límites configur
 
 ## Instalación (script vinculado)
 
-La herramienta es un **script vinculado a una hoja**: cada persona instala su propia copia en su hoja y autoriza su propia cuenta. **No es un complemento de Marketplace** y no se publica ni se instala desde ahí. **Todavía no se instaló ni se ejecutó en ninguna cuenta de Google.** Antes de instalarla, usá una hoja y una cuenta de prueba, y recorré el checklist `PENDING LIVE VALIDATION` de [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+La herramienta es un **script vinculado a una hoja**: cada persona instala su propia copia en su hoja y autoriza su propia cuenta. **No es un complemento de Marketplace** y no se publica ni se instala desde ahí. **El responsable ya realizó una instalación y envíos reales, pero no está cerrada la checklist integral de validación en Google.** Antes de instalarla, usá una hoja y una cuenta de prueba, y recorré el checklist `PENDING LIVE VALIDATION` de [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 
 **Opción A: editor de Apps Script**
 
@@ -62,9 +62,9 @@ La herramienta es un **script vinculado a una hoja**: cada persona instala su pr
 3. En la configuración del proyecto activá `Show "appsscript.json" manifest file in editor` y reemplazá su contenido por `src/appsscript.json`.
 4. Guardá, recargá la hoja y elegí `Mail Merge → Abrir Mail Merge`.
 
-**Opción B: `clasp` (descripto, nunca ejecutado por este proyecto)**
+**Opción B: `clasp` (instrucciones para una nueva instalación)**
 
-Requiere `clasp` instalado y la Apps Script API habilitada para tu usuario. Los comandos están sin ejecutar y hay que confirmarlos contra la documentación vigente de `clasp` al usarlos:
+Requiere `clasp` instalado y la Apps Script API habilitada para tu usuario. El responsable informó haber usado `clasp push` en su instalación; los siguientes comandos son ejemplos para instalar una nueva copia y deben contrastarse con la versión de `clasp` utilizada:
 
 ```bash
 clasp login
@@ -85,7 +85,7 @@ clasp push
 node tools/preview-sidebar.js [estado]
 ```
 
-Estados: `inicial`, `sin-borradores`, `configurada`, `setup`, `bloqueada`, `lista`, `prueba`, `envio`, `consentimiento`, `enviando`, `terminada`, `revisar`, `incierta` y `lista-500` (500 filas). Se abre `tmp/sidebar-preview.html` en Chrome o Edge y se cambia de estado con la barra o con `?state=<estado>`; el panel mide 300 px. La checklist visual está en `docs/OPERATIONS.md`. **No valida lo que `HtmlService` ignora o reescribe ni reemplaza la validación en vivo**, y su revisión en un navegador todavía no se ejecutó (AC-64, manual). No hay capturas en el repositorio; cuando existan, se guardarán en `docs/screenshots/`.
+Estados: `inicial`, `sin-borradores`, `configurada`, `setup`, `bloqueada`, `lista`, `prueba`, `envio`, `consentimiento`, `enviando`, `terminada`, `revisar`, `incierta` y `lista-500` (500 filas). El simulador respeta los bloqueos globales: `bloqueada` y `setup` sin preparar columnas no permiten obtener una confirmación ficticia válida. Se abre `tmp/sidebar-preview.html` en Chrome o Edge y se cambia de estado con la barra o con `?state=<estado>`; el panel mide 300 px. La checklist visual está en `docs/OPERATIONS.md`. **No valida lo que `HtmlService` ignora o reescribe ni reemplaza la validación en vivo**. El responsable aprobó visualmente la interfaz y la probó en Sheets, pero AC-64 no se considera cerrada hasta registrar los resultados de toda su checklist (incluidas las 500 filas y la navegación por teclado). No hay capturas en el repositorio; cuando existan, se guardarán en `docs/screenshots/`.
 
 ## Estructura
 
@@ -93,15 +93,17 @@ Estados: `inicial`, `sin-borradores`, `configurada`, `setup`, `bloqueada`, `list
 mailmerge_sdd_local/
 ├── AGENTS.md            # Contrato de ingeniería (reglas del proyecto)
 ├── CLAUDE.md            # Instrucciones específicas para Claude Code
+├── LICENSE              # Licencia MIT
 ├── src/                 # Código Apps Script V8, Sidebar.html y appsscript.json (manifest y scopes)
 │   ├── Setup.js         #   "Preparar columnas" (migración de encabezados)
 │   ├── Confirmation.js  #   Confirmación por token y registro de progreso en caché
-│   ├── Sidebar.html     #   Interfaz Eclipse Console (HTML, CSS y JavaScript del panel)
+│   ├── Sidebar.html     #   Panel Mail Merge ZB (HTML, CSS y JavaScript)
 │   └── …                #   Config, Sheet, Preflight, Template, Attachments, Send, Services, Ui
 ├── tools/               # preview-sidebar.js: vista previa local de la sidebar (manual, sin Google)
 ├── tests/               # Tests offline, servicios simulados y DOM falso de la sidebar
 │   ├── fixtures/sidebar-views.js   # Vistas ficticias de la sidebar (también para la vista previa)
-│   └── sidebar-console.test.js     # Tests de Eclipse Console (AC-56 a AC-62)
+│   ├── sidebar-console.test.js     # Tests de Eclipse Console (AC-56 a AC-62)
+│   └── preview-sidebar.test.js     # Regresión del simulador local
 ├── plans/               # Planes implementados: V1, V2 y Eclipse Console
 └── docs/
     ├── OPERATIONS.md         # Guía de operación, checklist del piloto y checklist visual
@@ -109,35 +111,41 @@ mailmerge_sdd_local/
     └── DECISIONS.md          # Decisiones aprobadas y riesgos
 ```
 
-Los demás archivos de `docs/` y `PROMPT_CLAUDE_CODE.md` son contexto inicial e investigación, no instrucciones para volver a implementar el producto.
+Los documentos iniciales de `docs/` (`REQUIREMENTS_DRAFT.md`, `ACCEPTANCE.md`, `REFERENCE_AUDIT.md` y `ENGINEERING_PLAYBOOK.md`) se conservan como trazabilidad histórica, no como instrucciones para volver a implementar V1. Se retiró el prompt de arranque obsoleto.
 
 ## Verificación local (Windows)
 
-Sin dependencias de npm ni servicios externos. Se usa Node.js v20.11.1 portable en `C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64`, agregado al PATH solo en la sesión. Desde `mailmerge_sdd_local/`:
+Sin dependencias de npm ni servicios externos. Requiere **Node.js 20 o superior** y se ejecuta desde la raíz del repositorio. Si `node` ya está disponible en el `PATH`, el comando es igual en Git Bash y PowerShell:
+
+```bash
+node --test
+```
+
+Si usás una versión portable de Node.js en Windows, agregá temporalmente **el directorio que contiene `node.exe`** al `PATH` de la sesión (reemplazá las rutas de ejemplo):
 
 **Git Bash**
 
 ```bash
-export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH"
+export PATH="/ruta/a/node:$PATH"
 node --test
 ```
 
 **PowerShell**
 
 ```powershell
-$env:Path = "C:\Users\matias.peralta_exter\nodejs\node-v20.11.1-win-x64;$env:Path"
+$env:Path = "C:\ruta\a\node;$env:Path"
 node --test
 ```
 
 Controles adicionales: `node --check <archivo.js>` (incluido `tools/preview-sidebar.js`), `git diff --check`, `git status --short` y `git remote -v` (debe estar vacío).
 
-## Próximo paso: piloto controlado
+## Validación en Google pendiente
 
-La herramienta todavía no se instaló en una cuenta de Google. Antes de un piloto hay que recorrer el checklist `PENDING LIVE VALIDATION` de [`docs/OPERATIONS.md`](docs/OPERATIONS.md) (que incluye el render del panel en Sheets, ítems 22 a 26) y autorizar en forma explícita los scopes de `src/appsscript.json` (sin cambios respecto de la V1), en particular `https://mail.google.com/` y `drive.readonly`, que dan acceso amplio. El piloto usa una hoja nueva, datos ficticios, archivos de prueba y destinatarios aprobados. Tener el código listo no habilita ninguna acción externa.
+El responsable confirmó una instalación mediante `clasp`, la visualización de la interfaz en Sheets y envíos reales el 2026-11-15. Estos son resultados de una prueba operativa informada, **no una certificación de todos los escenarios**. Falta documentar individualmente los controles pertinentes de [`docs/OPERATIONS.md`](docs/OPERATIONS.md), particularmente accesibilidad, grandes volúmenes, fallas y comportamiento de filtros. Los scopes de `src/appsscript.json` (sin cambios respecto de la V1) incluyen `https://mail.google.com/` y `drive.readonly`, de acceso amplio; toda nueva instalación necesita una revisión y autorización explícita de esos permisos. Para futuras pruebas, usar hoja, datos, archivos y destinatarios autorizados.
 
 ## Licencia
 
-A definir por la persona responsable del repositorio: este proyecto todavía no elige una licencia y no incluye un archivo `LICENSE`. Hasta que se defina, no se concede ningún permiso de uso o redistribución.
+**MIT** — ver [`LICENSE`](LICENSE). Se permite usar, modificar y redistribuir el código respetando las condiciones de atribución y exención de garantías de la licencia. Las cuentas de Google, los permisos de acceso y las cuotas no están incluidos en esa autorización.
 
 ## Desarrollo
 

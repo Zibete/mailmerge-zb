@@ -1,6 +1,6 @@
 # Product intent — Mail Merge V1
 
-**Status:** product baseline for spec-driven development. Everything below describes an intended workflow, not a completed implementation.
+**Status:** documento histórico de intención V1. Las secciones siguientes no reemplazan el contrato actual de `AGENTS.md`, la operación V2 de `docs/OPERATIONS.md` ni el diseño Eclipse Console. La V2 está implementada y verificada localmente; el responsable reportó despliegue y envíos reales, mientras la checklist integral sigue pendiente.
 
 ## Problem
 A small team currently uses a paid mail merge add-on to send individual, personalized operational notices. Each campaign starts with a Google Sheet, a formatted message template, per-recipient variables and sometimes different Drive attachments. Operators are comfortable with the existing columns and status tracking.
@@ -53,6 +53,6 @@ Los estados `SKIP`, `Email Sent` y cualquier otro valor no vacío (en la V2, en 
 
 **Chosen defaults for the new tool:** Gmail draft as template; small menu and, only if warranted, a compact sidebar; no scheduling; read-only Drive access; local Git only.
 
-**Interface (2026-11-14, D-49):** the sidebar is the only interface and its design is Eclipse Console (`plans/2026-11-14_eclipse-console-ui.md`): the product identity inside the panel is Mail Merge ZB — Eclipse Console; the menu `Mail Merge → Abrir Mail Merge` is unchanged.
+**Interface (2026-11-14, D-49):** the sidebar is the only interface and its design is Eclipse Console (`plans/2026-11-14_eclipse-console-ui.md`): the product identity inside the panel is Mail Merge ZB — Envío desde Google Sheets (updated 2026-11-15); the menu `Mail Merge → Abrir Mail Merge` is unchanged.
 
 **Needs future live verification:** exact alias and quota behavior for the executing account; actual email appearance (including inline images and Gmail signature); permissions for native Docs export; the final workflow used by operators. None of these blocks offline construction but they block production approval.
