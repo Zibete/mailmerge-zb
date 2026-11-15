@@ -75,6 +75,12 @@ test('AC-62 / D-51: los tokens de color cumplen WCAG AA', () => {
   assert.ok(contrast('6B7280', tokens.surface) < 4.5);
 });
 
+test('AC-62: los seis contadores de progreso ocupan dos columnas a 300 px', () => {
+  const html = readSidebar();
+  assert.match(html, /\.tiles\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(html, /<div class="tiles">[\s\S]*?<span id="count-pending"/);
+});
+
 // --- Estructura del Command Center (D-54, D-57) -----------------------------
 
 const INVARIANT_IDS = [
@@ -295,36 +301,30 @@ test('AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el
   assert.equal(dom.isVisible('skip-test'), false);
 });
 
-test('AC-56 / D-57: el toggle de un paso cerrado lo abre y el del paso con confirmación viva está deshabilitado', () => {
+test('AC-56 / D-57: acordeón exclusivo con cierre propio y retorno seguro a una confirmación viva', () => {
   const dom = loaded();
-  assert.equal(dom.byId('step-3-toggle').disabled, false);
-  assert.equal(dom.byId('step-4-toggle').disabled, false);
-
-  assert.equal(dom.click('step-1-toggle'), true);
-  assert.deepEqual(openSteps(dom), [1]);
-  assert.equal(dom.MailMergePanel.phase(), 'configurada', 'el acordeón no cambia la fase');
-
-  withSendConfirmation(dom);
-  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio');
-  assert.equal(dom.byId('step-4-toggle').disabled, true);
-  assert.equal(dom.byId('step-3-toggle').disabled, false);
-  assert.deepEqual(openSteps(dom), [4]);
-
-  const before = dom.calls.length;
   dom.click('step-1-toggle');
-  assert.deepEqual(openSteps(dom), [1, 4], 'el paso con confirmación viva no se cierra');
+  assert.deepEqual(openSteps(dom), [1]);
+  dom.click('step-1-toggle');
+  assert.deepEqual(openSteps(dom), [], 'clic en el mismo encabezado contrae la vista');
+  withSendConfirmation(dom);
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.byId('step-4-toggle').disabled, false);
+  assert.equal(dom.byId('execute-send').disabled, false, 'el helper ya confirmó los filtros');
+  const before = dom.calls.length;
   dom.click('step-2-toggle');
-  assert.deepEqual(openSteps(dom), [2, 4]);
-  assert.equal(dom.click('step-4-toggle'), false, 'toggle deshabilitado');
-  assert.equal(dom.calls.length, before, 'el acordeón no llama al servidor');
-  assert.equal(dom.isVisible('send-confirmation'), true);
-
-  // Con la prueba viva también, su toggle queda deshabilitado.
-  dom.click('step-3-toggle');
-  withTestConfirmation(dom);
-  assert.equal(dom.byId('step-3-toggle').disabled, true);
-  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio', 'el envío vivo precede a la prueba viva');
-  assert.deepEqual(openSteps(dom), [3, 4]);
+  assert.deepEqual(openSteps(dom), [2], 'nunca quedan dos pasos abiertos');
+  assert.equal(dom.isVisible('operation-banner'), true, 'confirmación viva accesible desde banner');
+  dom.click('step-4-toggle');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.isVisible('operation-banner'), false);
+  dom.click('step-4-toggle');
+  assert.deepEqual(openSteps(dom), []);
+  assert.equal(dom.isVisible('operation-banner'), true);
+  dom.click('operation-banner-action');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.calls.length, before, 'navegar no llama a Google');
+  assert.equal(dom.byId('execute-send').disabled, false, 'navegar no modifica el consentimiento');
 });
 
 test('AC-56 / D-56: preparar columnas, bloqueada, revisando-envio, enviando, terminada e incierta se derivan del estado', () => {
@@ -622,8 +622,8 @@ test('AC-57: los tiles muestran válidas, con errores, excluidas y cuota exactam
   assert.equal(dom.text('meter-valid'), '2');
   assert.equal(dom.text('meter-invalid'), '1');
   assert.equal(dom.text('meter-excluded'), '1');
-  assert.ok(dom.text('validation-lines').includes('Cuota diaria restante de Gmail: 95'));
-  assert.ok(dom.text('validation-result').includes('Cuota diaria restante de Gmail: 95'));
+  assert.ok(!dom.text('validation-lines').includes('Cuota diaria restante de Gmail: 95'));
+  assert.equal(dom.text('tile-quota-value'), '95');
 
   // Sin filas, la barra queda en w-0.
   const empty = radar('setup');
@@ -636,7 +636,8 @@ test('AC-57: los tiles muestran válidas, con errores, excluidas y cuota exactam
   assert.equal(unknown.isVisible('hint-quota-unknown'), true);
   assert.equal(unknown.isVisible('hint-quota-short'), false);
   assert.deepEqual(visibleRadarHints(unknown), ['hint-quota-unknown']);
-  assert.ok(unknown.text('validation-lines').includes('Cuota diaria restante de Gmail: no disponible'));
+  assert.ok(!unknown.text('validation-lines').includes('Cuota diaria restante de Gmail: no disponible'));
+  assert.equal(unknown.text('tile-quota-value'), 'no disponible');
 });
 
 test('AC-57 / D-58: cuota menor que las filas válidas muestra hint-quota-short con el número', () => {
@@ -761,8 +762,8 @@ test('AC-57: el mensaje de validación con problemas informa los conteos', () =>
   assert.equal(blocked.byId('validation-message').className, 'message error');
 
   const ok = radar('ok');
-  assert.equal(ok.text('validation-message'), 'Validación sin errores globales.');
-  assert.equal(ok.byId('validation-message').className, 'message ok');
+  assert.equal(ok.text('validation-message'), '', 'los tiles y el chip ya informan que está lista');
+  assert.equal(ok.byId('validation-message').className, 'message');
 });
 
 test('AC-57: revalidar no desprende los elementos estáticos del radar', () => {
@@ -878,7 +879,7 @@ test('AC-58 / D-53: el vencimiento se muestra como hora fija y al vencer el chip
   assert.match(dom.text('send-expiry'), /^Vence a las \d\d:\d\d \(10 min\)$/);
   assert.ok(!dom.text('send-confirmation').includes('La confirmación vence'));
   assert.equal(dom.pendingTimers().length, 1, 'un solo temporizador tras preparar');
-  assert.equal(dom.byId('step-4-toggle').disabled, true);
+  assert.equal(dom.byId('step-4-toggle').disabled, false, 'el operador puede plegar y volver a abrir');
   dom.setChecked('send-filter-ack', true);
   assert.equal(dom.byId('execute-send').disabled, false);
 
@@ -955,40 +956,27 @@ test('AC-58: la confirmación de prueba muestra Para: con la cuenta y su compuer
   assert.equal(consent.text('send-gate-status'), '');
 });
 
-test('AC-58: la confirmación recibe el foco en su compuerta porque el toggle del paso está deshabilitado', () => {
+test('AC-58: la confirmación recibe el foco en su compuerta y su encabezado permite plegar', () => {
   const send = preparedSend(validated('ok'));
-  assert.equal(send.byId('step-4-toggle').disabled, true);
+  assert.equal(send.byId('step-4-toggle').disabled, false);
   assert.equal(send.focusedId(), 'send-gate');
   assert.match(readSidebar(), /<fieldset id="send-gate" class="gate" tabindex="-1">\s*<legend>Verificación<\/legend>/);
 
   const test = preparedTest(validated('ok'));
-  assert.equal(test.byId('step-3-toggle').disabled, true);
+  assert.equal(test.byId('step-3-toggle').disabled, false);
   assert.equal(test.focusedId(), 'test-gate');
   assert.match(readSidebar(), /<fieldset id="test-gate" class="gate" tabindex="-1">\s*<legend>Verificación<\/legend>/);
 });
 
-test('AC-58: hint-filter-views se muestra solo en revisando-envio y hint-consent solo con consentRequired', () => {
-  const dom = validated('ok');
-  assert.equal(dom.isVisible('hint-filter-views'), false);
-  assert.equal(dom.isVisible('hint-consent'), false);
-
-  preparedSend(dom);
-  assert.equal(dom.MailMergePanel.phase(), 'revisando-envio');
-  assert.equal(dom.isVisible('hint-filter-views'), true);
-  assert.match(dom.text('hint-filter-views'), /Las vistas de filtro NO excluyen filas del envío\./);
-  assert.equal(dom.isVisible('hint-consent'), false);
-  dom.click('cancel-send');
-  dom.resolve(dom.lastCall('cancelConfirmation'), { ok: true });
-  assert.equal(dom.isVisible('hint-filter-views'), false);
-
-  preparedSend(dom, views.confirmationView('send', 'consentimiento'), views.TOKEN_2);
-  assert.equal(dom.isVisible('hint-filter-views'), true);
-  assert.equal(dom.isVisible('hint-consent'), true);
-  assert.match(dom.text('hint-consent'), /no se pueden recuperar desde esta herramienta/);
-  dom.click('cancel-send');
-  dom.resolve(dom.lastCall('cancelConfirmation'), { ok: true });
-  assert.equal(dom.isVisible('hint-filter-views'), false);
-  assert.equal(dom.isVisible('hint-consent'), false);
+test('AC-58: la advertencia de filtros y el reemplazo de metadatos constan una sola vez en los consentimientos', () => {
+  const dom = preparedSend(validated('ok'), views.confirmationView('send', 'consentimiento'));
+  assert.match(dom.text('send-filter-text'), /vistas de filtro no restringen el envío/i);
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+  assert.equal(dom.byId('send-consent').checked, false);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  assert.match(dom.text('send-consent-text'), /reemplaz|reemplac/);
+  assert.ok(!readSidebar().includes('id="hint-filter-views"'));
+  assert.ok(!readSidebar().includes('id="hint-consent"'));
 });
 
 // --- Observaciones del paso 3: anuncio y rechazo ----------------------------
@@ -1159,7 +1147,7 @@ test('AC-61 / D-60: los mensajes conservan role status y la guía y el motivo de
 const ALL_HINTS = [
   'hint-welcome', 'hint-no-drafts', 'hint-configured', 'hint-setup', 'hint-setup-blocked',
   'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite',
-  'hint-test-optional', 'hint-test-row', 'hint-filter-views', 'hint-consent', 'hint-review',
+  'hint-test-row', 'hint-review',
   'hint-pending', 'hint-uncertain', 'hint-test-done',
 ];
 
@@ -1172,7 +1160,7 @@ function shownHints(dom) {
 const HINT_STEP = {
   'hint-welcome': 1, 'hint-no-drafts': 1, 'hint-configured': 2, 'hint-setup': 2, 'hint-setup-blocked': 2,
   'hint-quota-unknown': 2, 'hint-quota-short': 2, 'hint-all-excluded': 2, 'hint-overwrite': 2,
-  'hint-test-optional': 3, 'hint-test-row': 3, 'hint-filter-views': 4, 'hint-consent': 4,
+  'hint-test-row': 3,
   'hint-review': null, 'hint-pending': null, 'hint-uncertain': null, 'hint-test-done': null,
 };
 
@@ -1180,7 +1168,7 @@ const HINT_STEP = {
 function assertHintsReachable(dom, ids, label) {
   for (const id of ids) {
     const step = HINT_STEP[id];
-    if (step !== null && !dom.isVisible(id) && !dom.byId(`step-${step}-toggle`).disabled) {
+    if (step !== null && !dom.isVisible(id) && dom.byId(`step-${step}-body`).hidden) {
       dom.click(`step-${step}-toggle`);
     }
     assert.equal(dom.isVisible(id), true, `${label}: ${id} visible en su paso`);
@@ -1257,18 +1245,18 @@ test('AC-60: cada ayuda aparece solo con su condición', () => {
     { name: 'preparar columnas bloqueadas', phase: 'preparar-columnas', build: () => validated('setup-bloqueado'), hints: ['hint-setup-blocked'] },
     { name: 'bloqueada', phase: 'bloqueada', build: () => validated('bloqueada'), hints: [] },
     { name: 'todo excluido', phase: 'bloqueada', build: () => validated('todo-excluido'), hints: ['hint-all-excluded'] },
-    { name: 'lista', phase: 'lista', build: () => validated('ok'), hints: ['hint-test-optional', 'hint-test-row'] },
-    { name: 'cuota nula', phase: 'lista', build: () => validated('cuota-nula'), hints: ['hint-quota-unknown', 'hint-test-optional', 'hint-test-row'] },
-    { name: 'cuota corta', phase: 'lista', build: () => validated('cuota-corta'), hints: ['hint-quota-short', 'hint-test-optional', 'hint-test-row'] },
-    { name: 'sobrescritura', phase: 'lista', build: () => validated('sobrescritura'), hints: ['hint-overwrite', 'hint-test-optional', 'hint-test-row'] },
-    { name: 'lista sin filas', phase: 'lista', build: withoutRows, hints: ['hint-test-optional'] },
+    { name: 'lista', phase: 'lista', build: () => validated('ok'), hints: ['hint-test-row'] },
+    { name: 'cuota nula', phase: 'lista', build: () => validated('cuota-nula'), hints: ['hint-quota-unknown', 'hint-test-row'] },
+    { name: 'cuota corta', phase: 'lista', build: () => validated('cuota-corta'), hints: ['hint-quota-short', 'hint-test-row'] },
+    { name: 'sobrescritura', phase: 'lista', build: () => validated('sobrescritura'), hints: ['hint-overwrite', 'hint-test-row'] },
+    { name: 'lista sin filas', phase: 'lista', build: withoutRows, hints: [] },
     { name: 'revisando prueba', phase: 'revisando-prueba', build: () => withTestConfirmation(validated('ok')), hints: [] },
-    { name: 'revisando envío', phase: 'revisando-envio', build: () => withSendConfirmation(validated('ok')), hints: ['hint-filter-views'] },
+    { name: 'revisando envío', phase: 'revisando-envio', build: () => withSendConfirmation(validated('ok')), hints: [] },
     {
       name: 'revisando envío con consentimiento',
       phase: 'revisando-envio',
       build: () => withSendConfirmation(validated('ok'), views.confirmationView('send', 'consentimiento')),
-      hints: ['hint-filter-views', 'hint-consent'],
+      hints: [],
     },
     { name: 'enviando', phase: 'enviando', build: running, hints: [] },
     { name: 'terminada limpia', phase: 'terminada', build: () => finishedSend(), hints: [] },
@@ -1289,7 +1277,7 @@ test('AC-60: cada ayuda aparece solo con su condición', () => {
 
 test('AC-60: hint-test-row lista hasta cinco filas y resume el resto por textContent', () => {
   const dom = validated('ok');
-  assert.equal(dom.text('hint-test-row-list'), '2 (alpha@example.test), 3 (beta@example.test)');
+  assert.equal(dom.text('hint-test-row-list'), '2, 3');
 
   const rows = [];
   for (let n = 2; n <= 8; n += 1) {
@@ -1300,7 +1288,7 @@ test('AC-60: hint-test-row lista hasta cinco filas y resume el resto por textCon
   many.resolve(many.lastCall('validateCampaign'), views.validationView('ok', { rows, moreRows: 3 }));
   assert.equal(
     many.text('hint-test-row-list'),
-    '2 (u2@example.test), 3 (u3@example.test), 4 (u4@example.test), 5 (u5@example.test), 6 (u6@example.test) y 5 más',
+    '2, 3, 4, 5, 6 y 5 más',
   );
 });
 
@@ -1330,7 +1318,7 @@ test('AC-60: las ayudas no comparan textos del servidor', () => {
 
 test('AC-60: guardar la configuración de nuevo vacía el radar y vuelve a pedir validar', () => {
   const dom = validated('setup');
-  dom.click('step-2-toggle');
+  assert.equal(dom.isVisible('step-2-body'), true);
   assert.equal(dom.isVisible('setup-box'), true);
   assert.equal(dom.byId('apply-setup').disabled, false);
   dom.click('step-1-toggle');
@@ -1378,4 +1366,127 @@ test('AC-61: todos los controles tienen label for y el CSS define :focus-visible
     assert.equal(dom.attribute(id, 'aria-describedby'), help);
     assert.ok(dom.byId(help), `existe ${help}`);
   }
+});
+
+// --- Refinamiento UX posterior a validación en Sheets (2026-11-15) ---------
+
+test('UX-01: el encabezado identifica el producto sin mostrar el nombre interno del diseño', () => {
+  const html = readSidebar();
+  assert.match(html, /<span class="brand__name">Mail Merge ZB<\/span>/);
+  assert.match(html, /<span class="brand__sub">Envío desde Google Sheets<\/span>/);
+  assert.ok(!/<span class="brand__sub">Eclipse Console<\/span>/.test(html));
+});
+
+test('UX-02: cada encabezado permite contraer su propia vista y abrir otro paso sin llamadas al servidor', () => {
+  const dom = loaded();
+  const calls = dom.calls.length;
+  assert.deepEqual(openSteps(dom), [2]);
+  dom.click('step-2-toggle');
+  assert.deepEqual(openSteps(dom), []);
+  assert.equal(dom.attribute('step-2-toggle', 'aria-expanded'), 'false');
+  dom.click('step-1-toggle');
+  assert.deepEqual(openSteps(dom), [1]);
+  dom.click('step-1-toggle');
+  assert.deepEqual(openSteps(dom), []);
+  dom.click('step-4-toggle');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.calls.length, calls);
+});
+
+test('UX-03: una confirmación colapsada tiene recordatorio visible y reapertura sin relajar consentimientos', () => {
+  const dom = preparedSend(validated('ok'), views.confirmationView('send', 'consentimiento'));
+  assert.equal(dom.isVisible('step-4-body'), true);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  dom.click('step-4-toggle');
+  assert.deepEqual(openSteps(dom), []);
+  assert.equal(dom.isVisible('operation-banner'), true);
+  assert.match(dom.text('operation-banner-text'), /confirmación de envío/i);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  const serverCalls = dom.calls.length;
+  dom.click('operation-banner-action');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.focusedId(), 'send-gate');
+  assert.equal(dom.isVisible('operation-banner'), false);
+  assert.equal(dom.calls.length, serverCalls);
+});
+
+test('UX-04: durante un envío puede verse otro paso sin ocultar el progreso ni perder el retorno a consola', () => {
+  const dom = running();
+  assert.equal(dom.isVisible('progress-section'), true);
+  dom.click('step-1-toggle');
+  assert.deepEqual(openSteps(dom), [1]);
+  assert.equal(dom.isVisible('operation-banner'), true);
+  assert.match(dom.text('operation-banner-text'), /en curso/i);
+  assert.equal(dom.isVisible('progress-section'), true);
+  dom.click('operation-banner-action');
+  assert.deepEqual(openSteps(dom), []);
+  assert.equal(dom.focusedId(), 'console-title');
+  assert.equal(dom.isVisible('operation-banner'), false);
+  assert.equal(dom.callsTo('executeSendPending').length, 1);
+});
+
+test('UX-05: la validación conserva el contexto mínimo y los datos operativos sin repetir las tarjetas', () => {
+  const dom = validated('ok');
+  const lines = dom.text('validation-lines');
+  assert.match(lines, /Pestaña: /);
+  assert.ok(!lines.includes('Filas válidas:'));
+  assert.ok(!lines.includes('Cuota diaria restante de Gmail:'));
+  assert.ok(!lines.includes('Asunto:'));
+  assert.equal(dom.text('tile-valid-value'), '2');
+  assert.equal(dom.text('tile-quota-value'), '95');
+  assert.equal(dom.text('validation-message'), '');
+  assert.ok(dom.text('group-rows').includes('alpha@example.test'));
+});
+
+test('UX-06: la revisión mantiene datos de campaña y destinatarios pero no repite conteos narrados', () => {
+  const dom = preparedSend(validated('ok'));
+  const lines = dom.text('send-view');
+  assert.match(lines, /Campaña/);
+  assert.match(lines, /Asunto/);
+  assert.match(lines, /Destinatarios \(3\)/);
+  assert.match(lines, /fin de la lista \(3\)/);
+  assert.ok(!lines.includes('Filas a enviar:'));
+  assert.equal(dom.byId('execute-send').disabled, true);
+});
+
+test('UX-07: la ayuda de prueba es una sola línea compacta con números de fila, sin correos repetidos', () => {
+  const dom = validated('ok');
+  const html = readSidebar();
+  assert.ok(!html.includes('id="hint-test-optional"'));
+  assert.equal(dom.text('hint-test-row-list'), '2, 3');
+  assert.ok(dom.text('help-test-row').includes('Email Sent'));
+  assert.equal(dom.isVisible('hint-test-row'), true);
+});
+
+test('UX-08: los resultados finales no duplican métricas ni incidencias que ya están en tarjetas y tabla', () => {
+  const dom = finishedSend(views.sendResult('conciliar'));
+  assert.equal(dom.byId('summary').hidden, true);
+  assert.equal(dom.text('summary'), '');
+  assert.ok(Number(dom.text('count-total')) > 0);
+  assert.ok(dom.tableRows('results-body').length > 0);
+  assert.equal(dom.isVisible('hint-review'), true);
+});
+
+test('UX-09: si vence la confirmación contraída desaparece el recordatorio y el envío queda bloqueado', () => {
+  const dom = preparedSend(validated('ok'));
+  dom.click('step-4-toggle');
+  assert.equal(dom.isVisible('operation-banner'), true);
+  dom.runNextTimer();
+  assert.equal(dom.isVisible('operation-banner'), false);
+  assert.equal(dom.byId('execute-send').disabled, true);
+  assert.equal(dom.byId('send-filter-ack').checked, false);
+});
+
+test('UX-10: la confirmación de prueba se puede plegar y recuperar sin aprobar su consentimiento', () => {
+  const dom = preparedTest(validated('ok'), views.confirmationView('test', 'consentimiento'));
+  assert.equal(dom.byId('test-consent').checked, false);
+  dom.click('step-3-toggle');
+  assert.deepEqual(openSteps(dom), []);
+  assert.equal(dom.isVisible('operation-banner'), true);
+  assert.match(dom.text('operation-banner-text'), /confirmación de prueba/i);
+  dom.click('operation-banner-action');
+  assert.deepEqual(openSteps(dom), [3]);
+  assert.equal(dom.focusedId(), 'test-gate');
+  assert.equal(dom.byId('test-consent').checked, false);
+  assert.equal(dom.byId('execute-test').disabled, true);
 });

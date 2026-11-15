@@ -332,8 +332,10 @@ test('AC-52 / D-29: al responder executeSendPending se detiene el sondeo y se pi
     ['3', 'beta@example.test', 'OMITIDA', 'Cambió después de la confirmación'],
     ['4', 'gamma@example.test', 'Email Sent', 'Aceptado por Gmail'],
   ]);
-  assert.ok(dom.text('summary').includes('2 correos aceptados por Gmail'));
-  assert.ok(dom.text('summary').includes('Filas procesadas: 3 de 3'));
+  assert.equal(dom.byId('summary').hidden, true, 'el resumen narrativo no duplica las métricas');
+  assert.equal(dom.text('summary'), '');
+  assert.equal(dom.text('count-processed'), '3');
+  assert.equal(dom.text('count-sent'), '2');
   assert.equal(dom.text('count-sent'), '2');
   assert.equal(dom.text('count-skipped'), '1');
   assert.equal(dom.byId('progress-bar').value, 3);

@@ -41,7 +41,12 @@
       .brand__moon { fill: var(--surface); stroke: currentColor; stroke-opacity: 0.55; }
       .brand__text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
       .brand__name { font-weight: 600; font-size: 13px; letter-spacing: 0.01em; }
-      .brand__sub { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; }
+      .brand__sub { color: var(--muted); font-size: 11px; letter-spacing: 0.01em; }
+
+      /* Contexto persistente al plegar una confirmación o navegar durante un envío. */
+      .operation-banner { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 8px; padding: 8px; margin-bottom: 8px; border: 1px solid rgba(251,191,36,0.55); border-radius: var(--radius); background: var(--surface-2); }
+      .operation-banner__text { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+      .operation-banner .btn { flex: none; min-height: 32px; padding: 0 8px; font-size: 11px; }
 
       /* Riel de etapa */
       .rail { position: relative; display: flex; justify-content: space-between; list-style: none; margin: var(--space-3) 2px 0; padding: 0; }
@@ -132,7 +137,7 @@
       .ic--clock { --ic: var(--ic-clock); }
 
       /* Indicadores: tiles y barra segmentada */
-      .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
+      .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
       .tile { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; min-width: 0; padding: var(--space-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
       .tile__value { font: 600 18px/1.15 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
       .tile__label { color: var(--muted); font-size: 11px; line-height: 1.25; text-transform: uppercase; letter-spacing: 0.06em; overflow-wrap: anywhere; }
@@ -239,7 +244,7 @@
         </svg>
         <div class="brand__text">
           <span class="brand__name">Mail Merge ZB</span>
-          <span class="brand__sub">Eclipse Console</span>
+          <span class="brand__sub">Envío desde Google Sheets</span>
         </div>
         <button type="button" id="close" class="btn btn--ghost btn--sm">Cerrar</button>
       </div>
@@ -253,6 +258,10 @@
     <p id="status-live" class="sr-only" role="status" aria-live="polite"></p>
 
     <main class="steps">
+      <div id="operation-banner" class="operation-banner" hidden>
+        <span id="operation-banner-text" class="operation-banner__text"></span>
+        <button type="button" id="operation-banner-action" class="btn btn--ghost">Volver</button>
+      </div>
       <section class="step" id="section-campaign">
         <h2 class="step__head">
           <button type="button" id="step-1-toggle" class="step__toggle" aria-expanded="true" aria-controls="step-1-body">
@@ -305,8 +314,7 @@
           </button>
         </h2>
         <div id="step-2-body" class="step__body">
-          <p class="hint">Revisa la campaña sin enviar ni escribir nada.</p>
-          <p id="hint-configured" class="hint" hidden><span>Validá antes de enviar; la validación no escribe nada en la hoja ni en Gmail.</span></p>
+          <p id="hint-configured" class="hint" hidden><span>Validá la campaña (solo lectura).</span></p>
           <div class="buttons">
             <button type="button" id="validate" class="btn">Validar</button>
           </div>
@@ -359,9 +367,7 @@
         <div id="step-3-body" class="step__body">
           <label for="test-row">Fila a probar</label>
           <input id="test-row" type="number" min="2" step="1" inputmode="numeric" aria-describedby="help-test-row">
-          <p id="help-test-row" class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
-          <p id="hint-test-optional" class="hint" hidden><span>La prueba es opcional; deja Resultado = Email Sent en la fila probada. Si no querés probar, usá Ir a Envío.</span></p>
-          <p id="hint-test-row" class="hint" hidden><span>Filas candidatas: <span id="hint-test-row-list"></span></span></p>
+          <p id="help-test-row" class="help">Prueba opcional a tu cuenta · marca Resultado = Email Sent.<span id="hint-test-row" hidden> Filas: <span id="hint-test-row-list"></span>.</span></p>
           <div class="buttons">
             <button type="button" id="review-test" class="btn">Revisar prueba</button>
             <button type="button" id="skip-test" class="btn" hidden>Ir a Envío</button>
@@ -397,7 +403,6 @@
           </button>
         </h2>
         <div id="step-4-body" class="step__body">
-          <p id="hint-filter-views" class="card" hidden>Solo los filtros normales (Datos → Crear un filtro) y las filas ocultas manualmente excluyen destinatarios. Las vistas de filtro NO excluyen filas del envío.</p>
           <div class="buttons">
             <button type="button" id="review-send" class="btn">Revisar envío</button>
           </div>
@@ -406,12 +411,11 @@
             <div id="send-view" class="view"></div>
             <fieldset id="send-gate" class="gate" tabindex="-1">
               <legend>Verificación</legend>
-              <label class="consent" for="send-filter-ack"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
+              <label class="consent" for="send-filter-ack"><input type="checkbox" id="send-filter-ack"><span id="send-filter-text">Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
               <div id="send-consent-box" class="view" hidden>
                 <label class="consent" for="send-consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
                 <ul id="send-consent-rows"></ul>
               </div>
-              <p id="hint-consent" class="hint" hidden>Al confirmar se reemplazan los valores actuales de las columnas Fecha, Campaña o Detalle de las filas indicadas. Esos valores no se pueden recuperar desde esta herramienta.</p>
             </fieldset>
             <p id="send-expiry" class="expiry ic ic--clock"></p>
             <p id="send-gate-status" class="gate-status"></p>
@@ -445,7 +449,7 @@
           <p id="progress-guidance" class="message error" role="alert" hidden></p>
           <p id="hint-uncertain" class="hint" hidden><span>Antes de volver a enviar, revisá la hoja: no reenvíes filas que puedan haber salido.</span></p>
           <p id="stopped-reason" class="message error" role="alert" hidden></p>
-          <div id="summary" class="view"></div>
+          <div id="summary" class="view" hidden></div>
           <p id="progress-truncated" class="hint" hidden>Se muestran solo las últimas filas; el resultado final las incluye todas.</p>
           <table class="log">
             <thead>
@@ -575,7 +579,7 @@
           lastValidation: null, // última ValidationView; se borra al guardar
           lastResult: null, // último SendResultView ok; se borra al guardar y en startRun()
           transportFailed: false, // falla de transporte de execute… (D-45); se limpia en startRun()
-          openStep: 1 // 1..4, o 5 para la consola
+          openStep: 1 // 0 = ninguno; 1..4 = vista abierta; 5 = consola
         };
 
         // --- Utilidades de texto y DOM ---------------------------------------
@@ -825,7 +829,7 @@
         var SEND_BUTTONS = ['execute-test', 'execute-send'];
         var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
         // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
-        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent', 'hint-review', 'hint-pending', 'hint-uncertain', 'hint-welcome', 'hint-no-drafts', 'hint-configured', 'hint-test-optional', 'hint-test-row', 'hint-test-done'];
+        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-review', 'hint-pending', 'hint-uncertain', 'hint-welcome', 'hint-no-drafts', 'hint-configured', 'hint-test-row', 'hint-test-done'];
 
         var previousPhase = null;
 
@@ -866,24 +870,47 @@
           return 'lista';
         }
 
+        function renderOperationBanner() {
+          var text = '';
+          var label = '';
+          if (liveConfirmation('send') && byId('step-4-body').hidden) {
+            text = 'Confirmación de envío pendiente';
+            label = 'Ver confirmación';
+          } else if (liveConfirmation('test') && byId('step-3-body').hidden) {
+            text = 'Confirmación de prueba pendiente';
+            label = 'Ver confirmación';
+          } else if (running() && state.openStep !== 5) {
+            text = state.run.kind === 'test' ? 'Prueba en curso · el progreso sigue activo' : 'Envío en curso · el progreso sigue activo';
+            label = 'Ver progreso';
+          }
+          byId('operation-banner').hidden = text === '';
+          setText(byId('operation-banner-text'), text);
+          setText(byId('operation-banner-action'), label);
+        }
+
         function openStep(n, moveFocus) {
           state.openStep = n;
           STEPS.forEach(function (i) {
             var toggle = byId('step-' + i + '-toggle');
-            // Un paso con toggle deshabilitado (confirmación viva) nunca se cierra (D-57).
-            var open = i === n || toggle.disabled;
+            var open = i === n;
             byId('step-' + i + '-body').hidden = !open;
             setAria(toggle, 'aria-expanded', open ? 'true' : 'false');
             setClass(toggle, 'step__toggle', { 'is-open': open });
           });
-          if (moveFocus) {
+          renderOperationBanner();
+          if (moveFocus && n > 0) {
             var target = byId(n <= 4 ? 'step-' + n + '-toggle' : 'console-title');
-            if (n <= 4 && target.disabled) {
-              // Un toggle deshabilitado no recibe el foco: va a la compuerta de la confirmación.
-              target = byId(n === 3 ? 'test-gate' : 'send-gate');
+            if (n === 3 && liveConfirmation('test')) {
+              target = byId('test-gate');
+            } else if (n === 4 && liveConfirmation('send')) {
+              target = byId('send-gate');
             }
             focusNode(target);
           }
+        }
+
+        function toggleStep(n) {
+          openStep(byId('step-' + n + '-body').hidden ? n : 0, false);
         }
 
         // Regla de apertura automática: entrar a una revisión o a una ejecución
@@ -1037,11 +1064,8 @@
           if (phase === 'configurada') {
             visible.push('hint-configured');
           }
-          if (phase === 'lista') {
-            visible.push('hint-test-optional');
-            if (data.validation && list(data.validation.rows).length > 0) {
-              visible.push('hint-test-row');
-            }
+          if (phase === 'lista' && data.validation && list(data.validation.rows).length > 0) {
+            visible.push('hint-test-row');
           }
           var validation = data.validation;
           if (validation) {
@@ -1067,12 +1091,6 @@
               visible.push('hint-overwrite');
             }
           }
-          if (phase === 'revisando-envio') {
-            visible.push('hint-filter-views');
-            if (data.sendView && data.sendView.consentRequired) {
-              visible.push('hint-consent');
-            }
-          }
           if (phase === 'terminada' && data.result) {
             var resultCounts = data.result.counts || {};
             if (count(resultCounts.review) > 0) {
@@ -1091,11 +1109,11 @@
           return visible;
         }
 
-        // Parte variable de hint-test-row: hasta cinco filas candidatas y el resto resumido.
+        // Solo números: las direcciones ya figuran en Validación y en la confirmación.
         function renderTestRowList() {
           var rows = state.lastValidation ? list(state.lastValidation.rows) : [];
           var shown = rows.slice(0, 5).map(function (row) {
-            return asText(row.rowNumber) + ' (' + asText(row.email) + ')';
+            return asText(row.rowNumber);
           });
           var more = Math.max(0, rows.length - 5) + (state.lastValidation ? count(state.lastValidation.moreRows) : 0);
           setText(byId('hint-test-row-list'), shown.join(', ') + (more > 0 ? ' y ' + more + ' más' : ''));
@@ -1117,9 +1135,6 @@
 
         function renderPhase() {
           var phase = derivePhase(state);
-          // El disabled de los toggles va antes de openStep(), que lo lee.
-          byId('step-3-toggle').disabled = liveConfirmation('test');
-          byId('step-4-toggle').disabled = liveConfirmation('send');
           renderRail(phase);
           renderButtons(phase);
           renderHints(phase);
@@ -1130,11 +1145,8 @@
           }
           if (shouldAutoOpen(prev, phase)) {
             openStep(PHASE_STEP[phase], true);
-          } else if (
-            (byId('step-3-toggle').disabled && byId('step-3-body').hidden) ||
-            (byId('step-4-toggle').disabled && byId('step-4-body').hidden)
-          ) {
-            openStep(state.openStep, false); // un paso con confirmación viva siempre visible
+          } else {
+            renderOperationBanner();
           }
         }
 
@@ -1341,23 +1353,10 @@
             appendLine(lines, 'Errores que afectan a toda la campaña:', 'error');
             appendList(lines, globalErrors);
           }
-          if (view.sheetName) {
-            appendLine(lines, 'Pestaña: ' + asText(view.sheetName));
-          }
-          if (view.subject) {
-            appendLine(lines, 'Asunto: ' + asText(view.subject));
-          }
-          if (view.from) {
-            appendLine(lines, 'Remitente: ' + asText(view.from));
-          }
-          if (view.replyTo) {
-            appendLine(lines, 'Reply-To: ' + asText(view.replyTo));
-          }
-          appendLine(lines, 'Cuota diaria restante de Gmail: ' + (quotaKnown ? view.quotaRemaining : 'no disponible'));
-          appendLine(
-            lines,
-            'Filas válidas: ' + count(counts.valid) + ' · Con errores: ' + count(counts.invalid) + ' · Excluidas: ' + count(counts.excluded)
-          );
+          var context = [];
+          if (view.sheetName) { context.push('Pestaña: ' + asText(view.sheetName)); }
+          if (view.from) { context.push('De: ' + asText(view.from)); }
+          if (context.length > 0) { appendLine(lines, context.join(' · '), 'validation-context'); }
           var common = list(view.commonAttachments).map(asText);
           if (common.length > 0) {
             appendLine(lines, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
@@ -1404,9 +1403,9 @@
           showMessage(
             el.validationMessage,
             view.ok
-              ? 'Validación sin errores globales.'
+              ? ''
               : 'La validación encontró problemas: ' + globalErrors.length + ' globales · ' + count(counts.invalid) + ' filas con errores',
-            view.ok ? 'ok' : 'error'
+            view.ok ? '' : 'error'
           );
         }
 
@@ -1491,11 +1490,6 @@
             appendPair(pairs, 'Reply-To', view.replyTo);
           }
           ui.view.appendChild(pairs);
-          appendLine(
-            ui.view,
-            'Filas a enviar: ' + count(view.count) + ' · Con errores (no se envían): ' + count(view.invalidCount) +
-              ' · Excluidas: ' + count(view.excludedCount)
-          );
           var common = list(view.commonAttachments).map(asText);
           if (common.length > 0) {
             appendLine(ui.view, 'Adjuntos del borrador (para todas las filas)', 'list-title');
@@ -1610,7 +1604,7 @@
               state.confirmations[kind] = confirmation;
               renderConfirmation(kind, response.view);
               scheduleExpiry(kind, confirmation);
-              showMessage(ui.message, 'Revisá cada fila antes de confirmar.', '');
+              showMessage(ui.message, '', ''); // el aviso y la lista de confirmación ya son visibles
               refreshControls();
             })
             .withFailureHandler(function (error) {
@@ -1815,10 +1809,7 @@
           });
           el.truncated.hidden = true;
           setStoppedReason(result.stoppedReason);
-          clear(el.summary);
-          list(result.summaryLines).forEach(function (line) {
-            appendLine(el.summary, line);
-          });
+          clear(el.summary); // conteos e incidencias ya se muestran en tarjetas, filas y motivo de corte
           showMessage(ui.message, 'Terminado; revisá el resultado en "Progreso y resultados".', 'ok');
           refreshControls();
         }
@@ -1893,12 +1884,18 @@
           select.addEventListener('change', refreshControls);
         });
         STEPS.forEach(function (i) {
-          var toggle = byId('step-' + i + '-toggle');
-          toggle.addEventListener('click', function () {
-            if (!toggle.disabled) {
-              openStep(i, false);
-            }
+          byId('step-' + i + '-toggle').addEventListener('click', function () {
+            toggleStep(i);
           });
+        });
+        byId('operation-banner-action').addEventListener('click', function () {
+          if (liveConfirmation('send')) {
+            openStep(4, true);
+          } else if (liveConfirmation('test')) {
+            openStep(3, true);
+          } else if (running()) {
+            openStep(5, true);
+          }
         });
         // "Ir a Envío" solo abre el paso 4: no llama al servidor.
         el.skipTest.addEventListener('click', function () {
