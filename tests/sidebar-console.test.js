@@ -1152,3 +1152,230 @@ test('AC-61 / D-60: los mensajes conservan role status y la guía y el motivo de
   assert.equal(cut.isVisible('stopped-reason'), true);
   assert.equal(cut.attribute('stopped-reason', 'role'), 'alert');
 });
+
+// --- Contextual Intelligence (AC-60, D-58) -----------------------------------
+
+// Lista cerrada de ayudas (`HINT_IDS` del script), en el orden de la tabla del plan.
+const ALL_HINTS = [
+  'hint-welcome', 'hint-no-drafts', 'hint-configured', 'hint-setup', 'hint-setup-blocked',
+  'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite',
+  'hint-test-optional', 'hint-test-row', 'hint-filter-views', 'hint-consent', 'hint-review',
+  'hint-pending', 'hint-uncertain', 'hint-test-done',
+];
+
+// Lee `hidden` de cada ayuda (no `isVisible`): el paso que la contiene puede estar plegado.
+function shownHints(dom) {
+  return ALL_HINTS.filter((id) => dom.byId(id).hidden === false);
+}
+
+// Paso del acordeón que contiene cada ayuda (null: consola de progreso, fuera del acordeón).
+const HINT_STEP = {
+  'hint-welcome': 1, 'hint-no-drafts': 1, 'hint-configured': 2, 'hint-setup': 2, 'hint-setup-blocked': 2,
+  'hint-quota-unknown': 2, 'hint-quota-short': 2, 'hint-all-excluded': 2, 'hint-overwrite': 2,
+  'hint-test-optional': 3, 'hint-test-row': 3, 'hint-filter-views': 4, 'hint-consent': 4,
+  'hint-review': null, 'hint-pending': null, 'hint-uncertain': null, 'hint-test-done': null,
+};
+
+// Cada ayuda no oculta se ve de verdad al abrir el paso que la contiene.
+function assertHintsReachable(dom, ids, label) {
+  for (const id of ids) {
+    const step = HINT_STEP[id];
+    if (step !== null && !dom.isVisible(id) && !dom.byId(`step-${step}-toggle`).disabled) {
+      dom.click(`step-${step}-toggle`);
+    }
+    assert.equal(dom.isVisible(id), true, `${label}: ${id} visible en su paso`);
+  }
+}
+
+function failedPanel() {
+  const dom = loadSidebar();
+  dom.fail(dom.calls[0], new Error('Sin acceso a la hoja'));
+  return dom;
+}
+
+const SAVED = { sheetId: 202, draftId: 'draft-1', from: 'alias@example.test', replyTo: '', campaignName: 'Otoño 2026' };
+
+test('AC-60 / D-58: primera apertura sin configuración muestra hint-welcome; con configuración no', () => {
+  const first = loaded(views.panelState({ current: null }));
+  assert.equal(first.MailMergePanel.phase(), 'sin-configurar');
+  assert.deepEqual(shownHints(first), ['hint-welcome']);
+  assert.equal(first.isVisible('hint-welcome'), true, 'el paso 1 está abierto');
+  assert.match(first.text('hint-welcome'), /nada se envía sin tu confirmación/i);
+
+  const configured = loaded();
+  assert.equal(configured.byId('hint-welcome').hidden, true);
+
+  // Guardar por primera vez la oculta.
+  first.setValue('sheet', '101');
+  first.setValue('draft', 'draft-1');
+  first.setValue('from', views.USER);
+  first.click('save');
+  first.resolve(first.lastCall('saveConfig'), { ...SAVED, sheetId: 101, from: views.USER });
+  assert.equal(first.byId('hint-welcome').hidden, true);
+});
+
+test('AC-60: sin borradores muestra hint-no-drafts', () => {
+  const dom = loaded(views.panelState({ drafts: [] }));
+  assert.equal(dom.MailMergePanel.phase(), 'sin-configurar');
+  assert.deepEqual(shownHints(dom), ['hint-no-drafts']);
+  assert.match(dom.text('hint-no-drafts'), /\{\{Encabezado\}\}/);
+  assert.equal(dom.text('config-message'), 'No hay borradores en tu cuenta de Gmail. Creá uno y volvé a abrir el panel.');
+
+  // getPanelState fallido: mensaje de error, fase sin-configurar, sin ayudas y sin excepciones.
+  const failed = failedPanel();
+  assert.equal(failed.MailMergePanel.phase(), 'sin-configurar');
+  assert.equal(failed.text('config-message'), 'Sin acceso a la hoja');
+  assert.deepEqual(shownHints(failed), []);
+  assert.equal(failed.byId('hint-welcome').hidden, true);
+  assert.equal(failed.byId('hint-no-drafts').hidden, true);
+});
+
+test('AC-60: cada ayuda aparece solo con su condición', () => {
+  const finishedTest = () => {
+    const dom = withTestConfirmation(validated('ok'));
+    dom.click('execute-test');
+    dom.resolve(dom.lastCall('executeTestSend'), views.sendResult('prueba'));
+    return dom;
+  };
+  const uncertain = () => {
+    const dom = running();
+    dom.fail(dom.lastCall('executeSendPending'), new Error('Se excedió el tiempo máximo de ejecución'));
+    return dom;
+  };
+  const withoutRows = () => {
+    const dom = loaded();
+    dom.click('validate');
+    dom.resolve(dom.lastCall('validateCampaign'), views.validationView('ok', { rows: [] }));
+    return dom;
+  };
+  const cases = [
+    { name: 'primera apertura', phase: 'sin-configurar', build: () => loaded(views.panelState({ current: null })), hints: ['hint-welcome'] },
+    { name: 'sin borradores', phase: 'sin-configurar', build: () => loaded(views.panelState({ drafts: [] })), hints: ['hint-no-drafts'] },
+    { name: 'getPanelState fallido', phase: 'sin-configurar', build: failedPanel, hints: [] },
+    { name: 'configurada', phase: 'configurada', build: () => loaded(), hints: ['hint-configured'] },
+    { name: 'preparar columnas', phase: 'preparar-columnas', build: () => validated('setup'), hints: ['hint-setup'] },
+    { name: 'preparar columnas bloqueadas', phase: 'preparar-columnas', build: () => validated('setup-bloqueado'), hints: ['hint-setup-blocked'] },
+    { name: 'bloqueada', phase: 'bloqueada', build: () => validated('bloqueada'), hints: [] },
+    { name: 'todo excluido', phase: 'bloqueada', build: () => validated('todo-excluido'), hints: ['hint-all-excluded'] },
+    { name: 'lista', phase: 'lista', build: () => validated('ok'), hints: ['hint-test-optional', 'hint-test-row'] },
+    { name: 'cuota nula', phase: 'lista', build: () => validated('cuota-nula'), hints: ['hint-quota-unknown', 'hint-test-optional', 'hint-test-row'] },
+    { name: 'cuota corta', phase: 'lista', build: () => validated('cuota-corta'), hints: ['hint-quota-short', 'hint-test-optional', 'hint-test-row'] },
+    { name: 'sobrescritura', phase: 'lista', build: () => validated('sobrescritura'), hints: ['hint-overwrite', 'hint-test-optional', 'hint-test-row'] },
+    { name: 'lista sin filas', phase: 'lista', build: withoutRows, hints: ['hint-test-optional'] },
+    { name: 'revisando prueba', phase: 'revisando-prueba', build: () => withTestConfirmation(validated('ok')), hints: [] },
+    { name: 'revisando envío', phase: 'revisando-envio', build: () => withSendConfirmation(validated('ok')), hints: ['hint-filter-views'] },
+    {
+      name: 'revisando envío con consentimiento',
+      phase: 'revisando-envio',
+      build: () => withSendConfirmation(validated('ok'), views.confirmationView('send', 'consentimiento')),
+      hints: ['hint-filter-views', 'hint-consent'],
+    },
+    { name: 'enviando', phase: 'enviando', build: running, hints: [] },
+    { name: 'terminada limpia', phase: 'terminada', build: () => finishedSend(), hints: [] },
+    { name: 'terminada con revisar y pendientes', phase: 'terminada', build: () => finishedSend(views.sendResult('conciliar')), hints: ['hint-review', 'hint-pending'] },
+    { name: 'prueba terminada', phase: 'terminada', build: finishedTest, hints: ['hint-test-done'] },
+    { name: 'incierta', phase: 'incierta', build: uncertain, hints: ['hint-uncertain'] },
+  ];
+  const covered = new Set();
+  for (const entry of cases) {
+    const dom = entry.build();
+    assert.equal(dom.MailMergePanel.phase(), entry.phase, `${entry.name}: fase`);
+    assert.deepEqual(shownHints(dom), entry.hints, `${entry.name}: ayudas visibles`);
+    assertHintsReachable(dom, entry.hints, entry.name);
+    entry.hints.forEach((id) => covered.add(id));
+  }
+  assert.deepEqual(ALL_HINTS.filter((id) => !covered.has(id)), [], 'la tabla cubre todas las ayudas');
+});
+
+test('AC-60: hint-test-row lista hasta cinco filas y resume el resto por textContent', () => {
+  const dom = validated('ok');
+  assert.equal(dom.text('hint-test-row-list'), '2 (alpha@example.test), 3 (beta@example.test)');
+
+  const rows = [];
+  for (let n = 2; n <= 8; n += 1) {
+    rows.push({ rowNumber: n, email: `u${n}@example.test`, attachmentNames: [] });
+  }
+  const many = loaded();
+  many.click('validate');
+  many.resolve(many.lastCall('validateCampaign'), views.validationView('ok', { rows, moreRows: 3 }));
+  assert.equal(
+    many.text('hint-test-row-list'),
+    '2 (u2@example.test), 3 (u3@example.test), 4 (u4@example.test), 5 (u5@example.test), 6 (u6@example.test) y 5 más',
+  );
+});
+
+test('AC-60: las ayudas no comparan textos del servidor', () => {
+  for (const variant of ['ok', 'bloqueada', 'setup', 'setup-bloqueado', 'todo-excluido', 'cuota-corta']) {
+    const baseline = shownHints(validated(variant));
+    const dom = loaded();
+    dom.click('validate');
+    const view = views.validationView(variant);
+    view.globalErrors = view.globalErrors.map(() => 'Texto arbitrario del servidor');
+    view.excludedByReason = view.excludedByReason.map((item) => ({ ...item, reason: 'otro motivo cualquiera' }));
+    view.invalidRows = view.invalidRows.map((item) => ({ ...item, reasons: ['motivo arbitrario'] }));
+    if (view.setup) {
+      view.setup = { ...view.setup, errors: view.setup.errors.map(() => 'error arbitrario') };
+    }
+    dom.resolve(dom.lastCall('validateCampaign'), view);
+    assert.deepEqual(shownHints(dom), baseline, variant);
+  }
+
+  const a = finishedSend(views.sendResult('conciliar'));
+  const b = finishedSend(views.sendResult('conciliar', {
+    stoppedReason: 'texto cualquiera',
+    rows: [{ rowNumber: 3, recipient: 'x@example.test', result: 'otra cosa', detail: 'detalle arbitrario' }],
+  }));
+  assert.deepEqual(shownHints(b), shownHints(a));
+});
+
+test('AC-60: guardar la configuración de nuevo vacía el radar y vuelve a pedir validar', () => {
+  const dom = validated('setup');
+  dom.click('step-2-toggle');
+  assert.equal(dom.isVisible('setup-box'), true);
+  assert.equal(dom.byId('apply-setup').disabled, false);
+  dom.click('step-1-toggle');
+  dom.click('save');
+  dom.resolve(dom.lastCall('saveConfig'), SAVED);
+  assert.equal(dom.MailMergePanel.phase(), 'configurada');
+  assert.equal(dom.byId('validation-result').hidden, true);
+  assert.equal(dom.byId('setup-box').hidden, true);
+  assert.equal(dom.isVisible('validation-result'), false);
+  assert.equal(dom.isVisible('setup-box'), false);
+  assert.equal(dom.byId('apply-setup').disabled, true);
+  assert.deepEqual(shownHints(dom), ['hint-configured']);
+
+  const ok = validated('ok');
+  ok.click('step-1-toggle');
+  ok.click('save');
+  ok.resolve(ok.lastCall('saveConfig'), SAVED);
+  assert.equal(ok.byId('validation-result').hidden, true);
+  assert.deepEqual(shownHints(ok), ['hint-configured']);
+});
+
+test('AC-60: hint-review es una tarjeta con lista de cinco pasos de conciliación', () => {
+  const block = /<div id="hint-review"[^>]*>([\s\S]*?)<\/div>/.exec(readSidebar());
+  assert.ok(block, 'hint-review existe');
+  assert.match(block[0], /class="card"/);
+  assert.match(block[1], /<ol>/);
+  assert.equal((block[1].match(/<li>/g) || []).length, 5);
+});
+
+// --- Accesibilidad restante (AC-61) -----------------------------------------
+
+test('AC-61: todos los controles tienen label for y el CSS define :focus-visible', () => {
+  const html = readSidebar();
+  const controls = [...html.matchAll(/<(?:input|select)\b[^>]*\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(controls.length >= 9, 'hay controles en el formulario');
+  for (const id of controls) {
+    assert.match(html, new RegExp(`<label\\b[^>]*\\sfor="${id}"`), `falta <label for="${id}">`);
+  }
+  assert.match(html, /:focus-visible\s*\{/);
+
+  // aria-describedby estático hacia ayudas fijas que existen.
+  const dom = loadSidebar();
+  const expected = { 'reply-to': 'help-reply-to', 'campaign-name': 'help-campaign-name', 'test-row': 'help-test-row' };
+  for (const [id, help] of Object.entries(expected)) {
+    assert.equal(dom.attribute(id, 'aria-describedby'), help);
+    assert.ok(dom.byId(help), `existe ${help}`);
+  }
+});

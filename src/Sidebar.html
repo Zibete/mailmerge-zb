@@ -107,6 +107,10 @@
       .hint::before { content: ""; flex: none; width: 14px; height: 14px; margin-top: 1px; background-color: currentColor; -webkit-mask-image: var(--ic-info); mask-image: var(--ic-info); -webkit-mask-size: contain; mask-size: contain; }
       .card { margin-top: 10px; padding: var(--space-2) 10px; background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: var(--radius); font-size: 12px; overflow-wrap: anywhere; }
       .card--danger { border-left-color: var(--danger); }
+      .card--info { border-left-color: var(--accent); }
+      .card--info .card__title { color: var(--accent); }
+      .card__icon { float: right; margin-left: 6px; color: var(--accent); }
+      .card ol { margin: 4px 0 0; padding-left: 18px; }
       .card__title { display: flex; gap: 6px; align-items: center; color: var(--warn); font-weight: 600; }
       .card--danger .card__title { color: var(--danger); }
       .chip { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); height: 20px; padding: 0 var(--space-2); border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -259,6 +263,12 @@
           </button>
         </h2>
         <div id="step-1-body" class="step__body">
+          <div id="hint-welcome" class="card card--info" hidden>
+            <svg class="card__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>
+            <p id="hint-welcome-title" class="card__title">Bienvenida: primera apertura</p>
+            <p id="hint-welcome-text">Cuatro pasos: 1 Guardá la campaña, 2 validá la hoja, 3 probá una fila (opcional) y 4 enviá. Nada se envía sin tu confirmación explícita.</p>
+          </div>
+
           <label for="sheet">Pestaña de la campaña</label>
           <select id="sheet"></select>
 
@@ -266,17 +276,18 @@
           <select id="draft"></select>
 
           <label for="from">Remitente</label>
-          <select id="from"></select>
-          <p class="help">Tu cuenta o uno de tus alias de Gmail.</p>
+          <select id="from" aria-describedby="help-from"></select>
+          <p id="help-from" class="help">Tu cuenta o uno de tus alias de Gmail.</p>
 
           <label for="reply-to">Reply-To (opcional)</label>
-          <input id="reply-to" type="text" autocomplete="off" spellcheck="false">
-          <p class="help">Una sola dirección. Dejalo vacío para responder al remitente.</p>
+          <input id="reply-to" type="text" autocomplete="off" spellcheck="false" aria-describedby="help-reply-to">
+          <p id="help-reply-to" class="help">Una sola dirección. Dejalo vacío para responder al remitente.</p>
 
           <label for="campaign-name">Nombre de campaña (opcional)</label>
-          <input id="campaign-name" type="text" autocomplete="off" maxlength="80">
-          <p class="help">Si lo dejás vacío se genera un ID por envío.</p>
+          <input id="campaign-name" type="text" autocomplete="off" maxlength="80" aria-describedby="help-campaign-name">
+          <p id="help-campaign-name" class="help">Si lo dejás vacío se genera un ID por envío.</p>
 
+          <p id="hint-no-drafts" class="hint" hidden>Creá un borrador en Gmail con los marcadores {{Encabezado}} que quieras usar y volvé a abrir el panel.</p>
           <div class="buttons">
             <button type="button" id="save" class="btn btn--primary" disabled>Guardar</button>
           </div>
@@ -295,6 +306,7 @@
         </h2>
         <div id="step-2-body" class="step__body">
           <p class="hint">Revisa la campaña sin enviar ni escribir nada.</p>
+          <p id="hint-configured" class="hint" hidden><span>Validá antes de enviar; la validación no escribe nada en la hoja ni en Gmail.</span></p>
           <div class="buttons">
             <button type="button" id="validate" class="btn">Validar</button>
           </div>
@@ -346,8 +358,10 @@
         </h2>
         <div id="step-3-body" class="step__body">
           <label for="test-row">Fila a probar</label>
-          <input id="test-row" type="number" min="2" step="1" inputmode="numeric">
-          <p class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
+          <input id="test-row" type="number" min="2" step="1" inputmode="numeric" aria-describedby="help-test-row">
+          <p id="help-test-row" class="hint">El correo de prueba va a tu cuenta y la fila queda con Resultado = Email Sent.</p>
+          <p id="hint-test-optional" class="hint" hidden><span>La prueba es opcional; deja Resultado = Email Sent en la fila probada. Si no querés probar, usá Ir a Envío.</span></p>
+          <p id="hint-test-row" class="hint" hidden><span>Filas candidatas: <span id="hint-test-row-list"></span></span></p>
           <div class="buttons">
             <button type="button" id="review-test" class="btn">Revisar prueba</button>
             <button type="button" id="skip-test" class="btn" hidden>Ir a Envío</button>
@@ -359,7 +373,7 @@
               <legend>Verificación</legend>
               <p class="help">Revisá la fila y el destinatario antes de enviar la prueba.</p>
               <div id="test-consent-box" class="view" hidden>
-                <label class="consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
+                <label class="consent" for="test-consent"><input type="checkbox" id="test-consent"><span id="test-consent-text"></span></label>
                 <ul id="test-consent-rows"></ul>
               </div>
             </fieldset>
@@ -392,9 +406,9 @@
             <div id="send-view" class="view"></div>
             <fieldset id="send-gate" class="gate" tabindex="-1">
               <legend>Verificación</legend>
-              <label class="consent"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
+              <label class="consent" for="send-filter-ack"><input type="checkbox" id="send-filter-ack"><span>Revisé todos los destinatarios listados. Entiendo que las vistas de filtro no restringen el envío; para excluir filas debo usar un filtro normal o Resultado = SKIP.</span></label>
               <div id="send-consent-box" class="view" hidden>
-                <label class="consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
+                <label class="consent" for="send-consent"><input type="checkbox" id="send-consent"><span id="send-consent-text"></span></label>
                 <ul id="send-consent-rows"></ul>
               </div>
               <p id="hint-consent" class="hint" hidden>Al confirmar se reemplazan los valores actuales de las columnas Fecha, Campaña o Detalle de las filas indicadas. Esos valores no se pueden recuperar desde esta herramienta.</p>
@@ -441,8 +455,15 @@
           </table>
           <div id="hint-review" class="card" hidden>
             <p class="card__title ic ic--warn">Conciliá las filas ENVIANDO y REVISAR</p>
-            <p>Leé Detalle de la fila. Buscá en Enviados un correo a esa dirección. Si está, escribí Email Sent en Resultado. Si no está, vaciá Resultado. Ante la duda, escribí SKIP.</p>
+            <ol>
+              <li>Leé la columna Detalle de la fila.</li>
+              <li>Buscá en Enviados un correo a esa dirección.</li>
+              <li>Si está, escribí Email Sent en Resultado.</li>
+              <li>Si no está, vaciá la celda Resultado.</li>
+              <li>Ante la duda, escribí SKIP.</li>
+            </ol>
           </div>
+          <p id="hint-test-done" class="hint" hidden><span>Para enviarle el correo real al destinatario de la fila probada, vaciá la celda Resultado de esa fila (dejala en blanco) y elegí Revisar envío.</span></p>
           <p id="hint-pending" class="hint" hidden><span>Siguen elegibles: volvé a Revisar envío.</span></p>
         </div>
       </section>
@@ -804,7 +825,7 @@
         var SEND_BUTTONS = ['execute-test', 'execute-send'];
         var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
         // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
-        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent', 'hint-review', 'hint-pending', 'hint-uncertain'];
+        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent', 'hint-review', 'hint-pending', 'hint-uncertain', 'hint-welcome', 'hint-no-drafts', 'hint-configured', 'hint-test-optional', 'hint-test-row', 'hint-test-done'];
 
         var previousPhase = null;
 
@@ -1005,6 +1026,23 @@
         // Ayudas contextuales (D-58): ids `hint-*` visibles para la fase.
         function hintsFor(phase, data) {
           var visible = [];
+          if (data.panel !== null) {
+            if (phase === 'sin-configurar' && data.panel.current === null) {
+              visible.push('hint-welcome');
+            }
+            if (list(data.panel.drafts).length === 0) {
+              visible.push('hint-no-drafts');
+            }
+          }
+          if (phase === 'configurada') {
+            visible.push('hint-configured');
+          }
+          if (phase === 'lista') {
+            visible.push('hint-test-optional');
+            if (data.validation && list(data.validation.rows).length > 0) {
+              visible.push('hint-test-row');
+            }
+          }
           var validation = data.validation;
           if (validation) {
             var setup = validation.setup;
@@ -1047,7 +1085,20 @@
           if (phase === 'incierta') {
             visible.push('hint-uncertain');
           }
+          if (phase === 'terminada' && data.run && data.run.kind === 'test') {
+            visible.push('hint-test-done');
+          }
           return visible;
+        }
+
+        // Parte variable de hint-test-row: hasta cinco filas candidatas y el resto resumido.
+        function renderTestRowList() {
+          var rows = state.lastValidation ? list(state.lastValidation.rows) : [];
+          var shown = rows.slice(0, 5).map(function (row) {
+            return asText(row.rowNumber) + ' (' + asText(row.email) + ')';
+          });
+          var more = Math.max(0, rows.length - 5) + (state.lastValidation ? count(state.lastValidation.moreRows) : 0);
+          setText(byId('hint-test-row-list'), shown.join(', ') + (more > 0 ? ' y ' + more + ' más' : ''));
         }
 
         function renderHints(phase) {
@@ -1055,11 +1106,13 @@
             panel: state.panel,
             validation: state.lastValidation,
             result: state.lastResult,
+            run: state.run,
             sendView: liveConfirmation('send') ? state.confirmations.send.view : null
           });
           HINT_IDS.forEach(function (id) {
             byId(id).hidden = visible.indexOf(id) === -1;
           });
+          renderTestRowList();
         }
 
         function renderPhase() {
@@ -1163,6 +1216,9 @@
               state.configSaved = true;
               state.lastValidation = null;
               state.lastResult = null;
+              state.setupHeaderKey = null;
+              el.validationResult.hidden = true;
+              el.setupBox.hidden = true;
               showMessage(el.configMessage, 'Configuración guardada. Usá "Validar" antes de enviar.', 'ok');
               refreshControls();
             })
