@@ -255,7 +255,7 @@ function counts(overrides = {}) {
   return { total: 3, processed: 0, sent: 0, skipped: 0, review: 0, pending: 3, ...overrides };
 }
 
-// Variantes: 'sin-iniciar', 'en-curso', 'parcial', 'prueba'.
+// Variantes: 'sin-iniciar', 'en-curso', 'parcial', 'prueba', 'desconocido'.
 function progress(variant = 'en-curso') {
   switch (variant) {
     case 'sin-iniciar':
@@ -302,6 +302,19 @@ function progress(variant = 'en-curso') {
           stoppedReason: '',
         },
       };
+    case 'desconocido':
+      return {
+        found: true,
+        progress: {
+          state: 'EN_CURSO',
+          kind: 'send',
+          campaign: 'Otoño 2026',
+          counts: counts({ processed: 1, pending: 2 }),
+          rows: [{ rowNumber: 2, result: 'ESTADO-NUEVO', detail: 'Resultado fuera de la lista cerrada' }],
+          rowsTruncated: false,
+          stoppedReason: '',
+        },
+      };
     default:
       return unknownVariant('progress', variant);
   }
@@ -309,7 +322,7 @@ function progress(variant = 'en-curso') {
 
 // --- SendResultView ------------------------------------------------------------
 
-// Variantes: 'ok', 'corte', 'rechazo', 'prueba'.
+// Variantes: 'ok', 'corte', 'rechazo', 'prueba', 'conciliar'.
 function sendResult(variant = 'ok', overrides = {}) {
   const base = {
     ok: true,
@@ -356,6 +369,17 @@ function sendResult(variant = 'ok', overrides = {}) {
         ],
         stoppedReason: '',
         summaryLines: ['1 correo aceptado por Gmail'],
+      };
+      break;
+    case 'conciliar':
+      result = {
+        ...base,
+        counts: counts({ processed: 2, sent: 1, review: 1, pending: 1 }),
+        rows: [
+          { rowNumber: 2, recipient: 'alpha@example.test', result: 'Email Sent', detail: 'Aceptado por Gmail' },
+          { rowNumber: 3, recipient: 'beta@example.test', result: 'REVISAR', detail: 'La fila se desplazó; enviado a [dirección]' },
+        ],
+        stoppedReason: 'Se agotó la cuota diaria de envíos de Gmail; las filas restantes siguen pendientes',
       };
       break;
     default:

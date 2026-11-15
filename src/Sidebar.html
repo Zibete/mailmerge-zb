@@ -154,6 +154,9 @@
       .view ul.diff { margin: var(--space-1) 0; padding-left: 0; list-style: none; font-family: var(--mono); }
       .view ul.diff li { padding-left: var(--space-2); }
       .diff-note { margin-top: var(--space-2); }
+      .progress-line { display: flex; align-items: center; gap: var(--space-2); margin-top: 10px; }
+      .progress-line progress { flex: 1; min-width: 0; margin-top: 0; }
+      .fraction { flex: none; font: 600 12px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
       progress { display: block; width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
 
       /* Compuerta de consentimiento */
@@ -417,13 +420,17 @@
             <div class="tile"><span class="tile__label">Procesadas</span><span id="count-processed" class="tile__value">0</span></div>
             <div class="tile"><span class="tile__label">Aceptadas por Gmail</span><span id="count-sent" class="tile__value">0</span></div>
             <div class="tile"><span class="tile__label">Omitidas</span><span id="count-skipped" class="tile__value">0</span></div>
-            <div class="tile"><span class="tile__label">Para revisar</span><span id="count-review" class="tile__value">0</span></div>
+            <div id="tile-review" class="tile"><span class="tile__label">Para revisar</span><span id="count-review" class="tile__value">0</span></div>
             <div class="tile"><span class="tile__label">Pendientes</span><span id="count-pending" class="tile__value">0</span></div>
           </div>
           <p class="hint">Una fila aceptada por Gmail puede quedar además para revisar (por ejemplo, si se desplazó).</p>
-          <progress id="progress-bar" max="1" value="0"></progress>
-          <p id="progress-guidance" class="message error" hidden></p>
-          <p id="stopped-reason" class="message error" hidden></p>
+          <div class="progress-line">
+            <progress id="progress-bar" max="1" value="0"></progress>
+            <span id="progress-fraction" class="fraction">0/0</span>
+          </div>
+          <p id="progress-guidance" class="message error" role="alert" hidden></p>
+          <p id="hint-uncertain" class="hint" hidden><span>Antes de volver a enviar, revisá la hoja: no reenvíes filas que puedan haber salido.</span></p>
+          <p id="stopped-reason" class="message error" role="alert" hidden></p>
           <div id="summary" class="view"></div>
           <p id="progress-truncated" class="hint" hidden>Se muestran solo las últimas filas; el resultado final las incluye todas.</p>
           <table class="log">
@@ -432,6 +439,11 @@
             </thead>
             <tbody id="results-body"></tbody>
           </table>
+          <div id="hint-review" class="card" hidden>
+            <p class="card__title ic ic--warn">Conciliá las filas ENVIANDO y REVISAR</p>
+            <p>Leé Detalle de la fila. Buscá en Enviados un correo a esa dirección. Si está, escribí Email Sent en Resultado. Si no está, vaciá Resultado. Ante la duda, escribí SKIP.</p>
+          </div>
+          <p id="hint-pending" class="hint" hidden><span>Siguen elegibles: volvé a Revisar envío.</span></p>
         </div>
       </section>
     </main>
@@ -476,6 +488,8 @@
           progressSection: byId('progress-section'),
           progressStatus: byId('progress-status'),
           progressBar: byId('progress-bar'),
+          progressFraction: byId('progress-fraction'),
+          tileReview: byId('tile-review'),
           progressGuidance: byId('progress-guidance'),
           stoppedReason: byId('stopped-reason'),
           summary: byId('summary'),
@@ -551,6 +565,25 @@
 
         function setText(node, value) {
           node.textContent = asText(value);
+        }
+
+        // Clase de la fila por lista cerrada (D-55): el texto del servidor
+        // solo se compara, nunca forma parte de la clase.
+        function rowStatusClass(result) {
+          switch (asText(result)) {
+            case 'Email Sent':
+              return 'row row--sent';
+            case 'OMITIDA':
+              return 'row row--skipped';
+            case 'NO ENVIADA':
+              return 'row row--notsent';
+            case 'ENVIANDO':
+              return 'row row--sending';
+            case 'REVISAR':
+              return 'row row--review';
+            default:
+              return 'row row--neutral';
+          }
         }
 
         function clear(node) {
@@ -771,7 +804,7 @@
         var SEND_BUTTONS = ['execute-test', 'execute-send'];
         var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
         // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
-        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent'];
+        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite', 'hint-filter-views', 'hint-consent', 'hint-review', 'hint-pending', 'hint-uncertain'];
 
         var previousPhase = null;
 
@@ -1001,6 +1034,18 @@
             if (data.sendView && data.sendView.consentRequired) {
               visible.push('hint-consent');
             }
+          }
+          if (phase === 'terminada' && data.result) {
+            var resultCounts = data.result.counts || {};
+            if (count(resultCounts.review) > 0) {
+              visible.push('hint-review');
+            }
+            if (count(resultCounts.pending) > 0) {
+              visible.push('hint-pending');
+            }
+          }
+          if (phase === 'incierta') {
+            visible.push('hint-uncertain');
           }
           return visible;
         }
@@ -1557,12 +1602,15 @@
           });
           el.progressBar.max = count(source.total) > 0 ? count(source.total) : 1;
           el.progressBar.value = count(source.processed);
+          setText(el.progressFraction, count(source.processed) + '/' + count(source.total));
+          setClass(el.tileReview, 'tile', { 'tile--warn': count(source.review) > 0 });
         }
 
         function renderRows(rows, recipientOf) {
           clear(el.resultsBody);
           list(rows).forEach(function (row) {
             var tr = document.createElement('tr');
+            tr.className = rowStatusClass(row.result);
             [asText(row.rowNumber), recipientOf(row), asText(row.result), asText(row.detail)].forEach(function (value) {
               var td = document.createElement('td');
               td.textContent = value;
@@ -1603,7 +1651,8 @@
             recipients: recipients,
             done: false,
             pollTimer: null,
-            polling: false
+            polling: false,
+            announced: null // último `processed` anunciado en status-live
           };
           state.run = run;
           setCounters({ total: count(confirmation.view.count), pending: count(confirmation.view.count) });
@@ -1662,6 +1711,11 @@
           var progress = response.progress;
           setText(el.progressStatus, progress.state === 'TERMINADO' ? 'El envío terminó; esperando el resultado final…' : 'Enviando…');
           setCounters(progress.counts);
+          var processed = count((progress.counts || {}).processed);
+          if (processed !== run.announced) {
+            run.announced = processed;
+            setText(el.statusLive, 'Enviando: ' + processed + ' de ' + count((progress.counts || {}).total));
+          }
           renderRows(progress.rows, progressRecipient(run));
           el.truncated.hidden = progress.rowsTruncated !== true;
           setStoppedReason(progress.stoppedReason);

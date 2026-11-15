@@ -1023,3 +1023,132 @@ test('AC-56 / D-57: el rechazo de un envío anuncia el motivo en status-live', (
   assert.equal(dom.focusedId(), 'step-4-toggle');
   assert.equal(dom.MailMergePanel.phase(), 'lista');
 });
+
+// --- Consola de ejecución (AC-59, D-55, D-60) -------------------------------
+
+const GUIDANCE = 'No se pudo confirmar el resultado. Revisá la columna Resultado (ENVIANDO / REVISAR) antes de volver a enviar';
+
+function running() {
+  const dom = withSendConfirmation(validated('ok'));
+  dom.click('execute-send');
+  return dom;
+}
+
+function poll(dom, response) {
+  dom.timers.runNext();
+  dom.resolve(dom.lastCall('getSendProgress'), response);
+}
+
+test('AC-59 / D-55: la tabla conserva tbody con filas de cuatro celdas y asigna la clase de estado por lista cerrada', () => {
+  const dom = running();
+  poll(dom, views.progress('en-curso'));
+  const rows = dom.tableRows('results-body');
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((cells) => cells.length === 4));
+  assert.deepEqual(dom.childrenOf('results-body').map((tr) => tr.className), ['row row--sent', 'row row--review']);
+
+  poll(dom, views.progress('desconocido'));
+  assert.deepEqual(dom.childrenOf('results-body').map((tr) => tr.className), ['row row--neutral']);
+  assert.equal(dom.tableRows('results-body')[0].length, 4);
+
+  const done = finishedSend();
+  assert.deepEqual(done.childrenOf('results-body').map((tr) => tr.className), ['row row--sent', 'row row--skipped', 'row row--sent']);
+});
+
+test('AC-59: progress-fraction muestra procesadas/total y status-live anuncia solo cuando cambia processed', () => {
+  const dom = running();
+  assert.equal(dom.text('progress-fraction'), '0/3');
+  poll(dom, views.progress('parcial'));
+  assert.equal(dom.text('progress-fraction'), '1/3');
+  assert.equal(dom.text('status-live'), 'Enviando: 1 de 3');
+  assert.equal(dom.byId('progress-bar').max, 3);
+  assert.equal(dom.byId('progress-bar').value, 1);
+
+  // Con el mismo processed el anuncio no se reescribe.
+  dom.byId('status-live').textContent = 'otro texto';
+  poll(dom, views.progress('parcial'));
+  assert.equal(dom.text('status-live'), 'otro texto');
+
+  poll(dom, views.progress('en-curso'));
+  assert.equal(dom.text('progress-fraction'), '2/3');
+  assert.equal(dom.text('status-live'), 'Enviando: 2 de 3');
+});
+
+test('AC-59: Para revisar mayor que cero destaca el tile y muestra hint-review; pendientes muestra hint-pending y Revisar envío', () => {
+  const clean = finishedSend();
+  assert.equal(clean.byId('tile-review').className, 'tile');
+  assert.equal(clean.isVisible('hint-review'), false);
+  assert.equal(clean.isVisible('hint-pending'), false);
+
+  const dom = finishedSend(views.sendResult('conciliar'));
+  assert.equal(dom.MailMergePanel.phase(), 'terminada');
+  assert.equal(dom.byId('tile-review').className, 'tile tile--warn');
+  assert.equal(dom.text('count-review'), '1');
+  assert.equal(dom.isVisible('hint-review'), true);
+  assert.equal(dom.isVisible('hint-pending'), true);
+  assert.equal(dom.isVisible('hint-uncertain'), false);
+  assert.equal(dom.byId('review-send').className, 'btn');
+  dom.click('step-4-toggle');
+  assert.equal(dom.isVisible('review-send'), true);
+  assert.equal(dom.byId('review-send').disabled, false);
+});
+
+test('AC-59 / D-45 (regresión): la falla de transporte deja fase incierta, la guía exacta en progress-guidance con role alert y hint-uncertain', () => {
+  const dom = running();
+  poll(dom, views.progress('parcial'));
+  dom.fail(dom.lastCall('executeSendPending'), new Error('Se excedió el tiempo máximo de ejecución'));
+  assert.equal(dom.MailMergePanel.phase(), 'incierta');
+  assert.equal(dom.text('progress-guidance'), GUIDANCE);
+  assert.equal(dom.isVisible('progress-guidance'), true);
+  assert.equal(dom.attribute('progress-guidance', 'role'), 'alert');
+  assert.equal(dom.isVisible('hint-uncertain'), true);
+  assert.equal(dom.isVisible('hint-review'), false);
+  assert.equal(dom.tableRows('results-body').length, 1);
+});
+
+test('AC-59 / D-45 (regresión): lock no disponible vuelve al paso 4 con el motivo y sin consola', () => {
+  const rejection = views.sendResult('rechazo');
+  const dom = finishedSend(rejection);
+  assert.equal(dom.isVisible('progress-section'), false);
+  assert.equal(dom.isVisible('send-message'), true);
+  assert.equal(dom.text('send-message'), rejection.summaryLines[0]);
+  assert.equal(dom.isVisible('step-4-body'), true);
+  assert.equal(dom.focusedId(), 'step-4-toggle');
+});
+
+test('AC-59: al terminar se abre la consola con foco en su título', () => {
+  const dom = finishedSend();
+  assert.equal(dom.isVisible('progress-section'), true);
+  assert.equal(dom.focusedId(), 'console-title');
+  assert.equal(dom.text('progress-status'), 'Envío terminado.');
+
+  // Aunque el foco se haya ido durante la ejecución y haya habido sondeos.
+  const polled = running();
+  poll(polled, views.progress('parcial'));
+  polled.byId('step-2-toggle').focus();
+  polled.resolve(polled.lastCall('executeSendPending'), views.sendResult('ok'));
+  assert.equal(polled.focusedId(), 'console-title');
+  assert.equal(polled.isVisible('progress-section'), true);
+
+  // También al terminar una prueba.
+  const trial = withTestConfirmation(validated('ok'));
+  trial.click('execute-test');
+  trial.byId('step-1-toggle').focus();
+  trial.resolve(trial.lastCall('executeTestSend'), views.sendResult('prueba'));
+  assert.equal(trial.MailMergePanel.phase(), 'terminada');
+  assert.equal(trial.focusedId(), 'console-title');
+  assert.equal(trial.text('progress-status'), 'Prueba terminada.');
+});
+
+test('AC-61 / D-60: los mensajes conservan role status y la guía y el motivo de corte tienen role alert', () => {
+  const dom = loadSidebar();
+  for (const id of ['config-message', 'validation-message', 'test-message', 'send-message', 'progress-status']) {
+    assert.equal(dom.attribute(id, 'role'), 'status', id);
+    assert.equal(dom.attribute(id, 'aria-live'), 'polite', id);
+  }
+  assert.equal(dom.attribute('progress-guidance', 'role'), 'alert');
+  assert.equal(dom.attribute('stopped-reason', 'role'), 'alert');
+  const cut = finishedSend(views.sendResult('corte'));
+  assert.equal(cut.isVisible('stopped-reason'), true);
+  assert.equal(cut.attribute('stopped-reason', 'role'), 'alert');
+});
