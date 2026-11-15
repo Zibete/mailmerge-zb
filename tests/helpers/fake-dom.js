@@ -7,14 +7,19 @@
 // `document.createElement`, `appendChild`, `removeChild`, `firstChild`,
 // `textContent`, `value`, `checked`, `max`, `disabled`, `hidden`,
 // `className`, `addEventListener` (`click` y `change`), `new Option`,
-// `select.add`, `setTimeout` y `clearTimeout`. Cualquier otra propiedad de
-// `document` o de un elemento lanza (con un `Proxy`), para que la sidebar no
-// salga de ese subconjunto (por ejemplo, nada de HTML crudo ni de selectores).
+// `select.add`, `setTimeout` y `clearTimeout`. D-50 amplía el subconjunto con
+// `setAttribute`, `getAttribute` y `removeAttribute` (solo `aria-*` y
+// `role`), `focus` y `blur`. Cualquier otra propiedad de `document` o de un
+// elemento lanza (con un `Proxy`), para que la sidebar no salga de ese
+// subconjunto: siguen sin existir `classList`, `dataset`, `style`,
+// `querySelector*`, `createElementNS`, `cloneNode`, `innerHTML`, los eventos
+// `input`, `keydown` y `submit` y otros temporizadores.
 //
 // Los elementos con `id` del marcado se crean con su etiqueta y su anidamiento
 // (cada uno cuelga del ancestro con `id` más cercano), sus atributos `type`,
-// `class`, `value`, `max`, `hidden` y `disabled`, y su texto si no contiene
-// otras etiquetas. `google.script.run` es un falso encadenable que registra
+// `class`, `value`, `max`, `hidden`, `disabled`, `aria-*` y `role`, y su
+// texto si no contiene otras etiquetas. El foco se registra en una variable
+// común (`focusedId()`). `google.script.run` es un falso encadenable que registra
 // cada llamada (`{ name, args, state }`) y deja resolverla o hacerla fallar;
 // solo acepta los nombres de las funciones públicas de `src/Ui.js`. Los
 // temporizadores quedan en una cola manual.
@@ -40,9 +45,15 @@ const ELEMENT_READ = [
   'removeChild',
   'firstChild',
   'addEventListener',
+  'setAttribute',
+  'getAttribute',
+  'removeAttribute',
+  'focus',
+  'blur',
 ];
 const ELEMENT_WRITE = ['textContent', 'value', 'checked', 'max', 'disabled', 'hidden', 'className'];
 const EVENT_TYPES = ['click', 'change'];
+const ATTRIBUTE_NAME = /^(aria-[a-z]+|role)$/;
 
 // Nombres de las funciones públicas de `src/Ui.js` (las que no terminan en `_`).
 function publicServerFunctions() {
@@ -61,6 +72,15 @@ function publicServerFunctions() {
 function attribute(attrs, name) {
   const match = new RegExp('\\s' + name + '\\s*=\\s*"([^"]*)"').exec(attrs);
   return match ? match[1] : null;
+}
+
+// Atributos `aria-*` y `role` estáticos de un elemento del marcado (D-50).
+function ariaAttributes(attrs) {
+  const result = {};
+  for (const match of attrs.matchAll(/\s(aria-[a-z]+|role)\s*=\s*"([^"]*)"/g)) {
+    result[match[1]] = match[2];
+  }
+  return result;
 }
 
 function hasBooleanAttribute(attrs, name) {
@@ -86,6 +106,7 @@ function loadSidebar(options = {}) {
   const internals = new WeakMap(); // proxy → nodo interno
   const byIdMap = new Map();
   const created = [];
+  let focused = ''; // id del último elemento que recibió el foco (D-50)
 
   // --- Nodos ----------------------------------------------------------------
 
@@ -148,6 +169,7 @@ function loadSidebar(options = {}) {
       children: [],
       parent: null,
       listeners: {},
+      attributes: { ...(init.attributes || {}) },
     };
 
     const api = {
@@ -192,6 +214,26 @@ function loadSidebar(options = {}) {
         }
         return api.appendChild(option);
       },
+      setAttribute(name, value) {
+        if (!ATTRIBUTE_NAME.test(String(name))) {
+          throw new Error(`Sidebar: atributo no permitido "${name}"`);
+        }
+        node.attributes[name] = String(value);
+      },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(node.attributes, name) ? node.attributes[name] : null;
+      },
+      removeAttribute(name) {
+        delete node.attributes[name];
+      },
+      focus() {
+        focused = node.id;
+      },
+      blur() {
+        if (focused === node.id) {
+          focused = '';
+        }
+      },
     };
 
     function getValue() {
@@ -232,6 +274,11 @@ function loadSidebar(options = {}) {
           case 'removeChild':
           case 'addEventListener':
           case 'add':
+          case 'setAttribute':
+          case 'getAttribute':
+          case 'removeAttribute':
+          case 'focus':
+          case 'blur':
             return api[prop];
           default:
             return node[prop];
@@ -325,6 +372,7 @@ function loadSidebar(options = {}) {
         max: attribute(attrs, 'max') === null ? undefined : attribute(attrs, 'max'),
         hidden: hasBooleanAttribute(attrs, 'hidden'),
         disabled: hasBooleanAttribute(attrs, 'disabled'),
+        attributes: ariaAttributes(attrs),
       });
       if (hasBooleanAttribute(attrs, 'checked')) {
         node.checked = true;
@@ -567,6 +615,12 @@ function loadSidebar(options = {}) {
     return true;
   }
 
+  // Valor de un atributo `aria-*` o `role` de un elemento, o `null`.
+  function attributeOf(id, name) {
+    const attributes = nodeOf(id).attributes;
+    return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null;
+  }
+
   function callsTo(name) {
     return calls.filter((call) => call.name === name);
   }
@@ -595,6 +649,8 @@ function loadSidebar(options = {}) {
     childrenOf,
     tableRows,
     isVisible,
+    attribute: attributeOf,
+    focusedId: () => focused,
     callsTo,
     lastCall,
     pendingCalls,

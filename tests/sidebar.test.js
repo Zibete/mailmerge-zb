@@ -816,6 +816,44 @@ test('fake-dom: document y los elementos lanzan fuera del subconjunto permitido'
     () => loadSidebar({ html: page('document.getElementById("box").addEventListener("submit", function () {});') }),
     /evento no permitido/
   );
+
+  // D-50: solo atributos aria-* y role; ni classList, ni dataset, ni SVG, ni eventos no listados.
+  for (const name of ['href', 'onclick', 'style', 'data-x']) {
+    assert.throws(
+      () => loadSidebar({ html: page('document.getElementById("box").setAttribute("' + name + '", "x");') }),
+      /atributo no permitido/
+    );
+  }
+  assert.throws(() => loadSidebar({ html: page('document.getElementById("box").classList;') }), /no expone "classList"/);
+  assert.throws(() => loadSidebar({ html: page('document.getElementById("box").dataset;') }), /no expone "dataset"/);
+  assert.throws(
+    () => loadSidebar({ html: page('document.createElementNS("http://www.w3.org/2000/svg", "svg");') }),
+    /document\.createElementNS/
+  );
+  assert.throws(
+    () => loadSidebar({ html: page('document.getElementById("box").addEventListener("input", function () {});') }),
+    /evento no permitido/
+  );
+
+  // D-50: aria-* y role se escriben, se leen y se borran; el foco queda registrado.
+  const dom = loadSidebar({
+    html: page(
+      'var box = document.getElementById("box"); box.setAttribute("aria-expanded", "true");' +
+        ' var read = box.getAttribute("aria-expanded"); box.focus();'
+    ),
+  });
+  assert.equal(dom.context.read, 'true');
+  assert.equal(dom.attribute('box', 'aria-expanded'), 'true');
+  assert.equal(dom.focusedId(), 'box');
+  dom.byId('box').removeAttribute('aria-expanded');
+  assert.equal(dom.byId('box').getAttribute('aria-expanded'), null);
+  dom.byId('box').blur();
+  assert.equal(dom.focusedId(), '');
+
+  // D-50: los aria-*/role estáticos del marcado actual se conservan.
+  const sidebar = loadSidebar();
+  assert.equal(sidebar.attribute('config-message', 'role'), 'status');
+  assert.equal(sidebar.attribute('config-message', 'aria-live'), 'polite');
 });
 
 
