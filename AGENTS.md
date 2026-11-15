@@ -5,6 +5,7 @@ Fuente principal de las reglas de ingeniería del proyecto, para cualquier agent
 ## Estado del proyecto
 
 - **V2 implementada y verificada localmente (`LOCAL_VERIFIED`)**: panel lateral único, columnas gestionadas `Fecha`, `Campaña`, `Resultado` y `Detalle`, "Preparar columnas" y confirmación por token. Código en `src/`, tests offline en `tests/`, plan ejecutado en `plans/2026-11-09_mail-merge-v2.md` (evoluciona la V1 de `plans/2026-11-08_mail-merge-v1.md`).
+- **Interfaz Eclipse Console (2026-11-14)**: `plans/2026-11-14_eclipse-console-ui.md` es el diseño vigente de la interfaz de la sidebar (identidad, acordeón, radar, compuertas, consola y ayudas; D-49 a D-60) y reemplaza en lo visual la sección "Detalle del código > Sidebar" del plan V2. Sigue en `LOCAL_VERIFIED`: la vista previa local (`tools/preview-sidebar.js`) y el render real en Apps Script siguen pendientes de ejecución (AC-64 y ítems 22 a 26 de `docs/OPERATIONS.md`).
 - **Pendiente en Google (`PENDING LIVE VALIDATION`)**: ni la V1 ni la V2 se instalaron, autorizaron ni ejecutaron en Apps Script, Gmail ni Drive. No declarar `LIVE_VERIFIED` sin resultados reales de los controles de `docs/OPERATIONS.md`.
 - No repetir los planes ejecutados. El trabajo posterior es mantenimiento, auditoría, correcciones y preparación de un piloto controlado.
 - Para el resultado actual de los tests, ejecutar la suite; `docs/ACCEPTANCE_STATUS.md` registra la evidencia del cierre de la V2.
@@ -17,7 +18,7 @@ Trabajo, documentación y comunicación en **español**: análisis, planes, docu
 
 - Mantener un mail merge **pequeño** sobre Google Sheets, borradores de Gmail, Drive y Apps Script V8: configurar campaña, validar, enviar una prueba, confirmar envíos pendientes y ver los resultados en las columnas `Resultado` y `Detalle` de la pestaña de la campaña.
 - Sin servidores, aplicación web, bases de datos externas, CRM, tracking, automatización de marketing, programación de campañas, respuestas automáticas, rediseños de interfaz fuera de la especificación, reintentos automáticos de envíos dudosos, dependencias ni capas de arquitectura sin necesidad verificada.
-- Fuentes vigentes: `docs/PRODUCT.md` (producto), `plans/2026-11-09_mail-merge-v2.md` (diseño implementado vigente), `plans/2026-11-08_mail-merge-v1.md` (diseño V1, vigente salvo lo que la V2 reemplaza), `docs/DECISIONS.md` (decisiones), `docs/OPERATIONS.md` (operación), `docs/ACCEPTANCE_STATUS.md` (verificación).
+- Fuentes vigentes: `docs/PRODUCT.md` (producto), `plans/2026-11-09_mail-merge-v2.md` (diseño implementado vigente), `plans/2026-11-14_eclipse-console-ui.md` (diseño vigente de la interfaz de la sidebar), `plans/2026-11-08_mail-merge-v1.md` (diseño V1, vigente salvo lo que la V2 reemplaza), `docs/DECISIONS.md` (decisiones), `docs/OPERATIONS.md` (operación), `docs/ACCEPTANCE_STATUS.md` (verificación).
 - Insumos históricos, que no prevalecen sobre decisiones posteriores: `docs/REQUIREMENTS_DRAFT.md`, `docs/ACCEPTANCE.md` y `docs/ENGINEERING_PLAYBOOK.md`. `docs/REFERENCE_AUDIT.md` es investigación, no código para copiar. `PROMPT_CLAUDE_CODE.md` es el pedido de arranque: no ejecutarlo.
 
 ## Límite local y autorización (obligatorio)

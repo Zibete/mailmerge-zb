@@ -53,4 +53,6 @@ Los estados `SKIP`, `Email Sent` y cualquier otro valor no vacío (en la V2, en 
 
 **Chosen defaults for the new tool:** Gmail draft as template; small menu and, only if warranted, a compact sidebar; no scheduling; read-only Drive access; local Git only.
 
+**Interface (2026-11-14, D-49):** the sidebar is the only interface and its design is Eclipse Console (`plans/2026-11-14_eclipse-console-ui.md`): the product identity inside the panel is Mail Merge ZB — Eclipse Console; the menu `Mail Merge → Abrir Mail Merge` is unchanged.
+
 **Needs future live verification:** exact alias and quota behavior for the executing account; actual email appearance (including inline images and Gmail signature); permissions for native Docs export; the final workflow used by operators. None of these blocks offline construction but they block production approval.

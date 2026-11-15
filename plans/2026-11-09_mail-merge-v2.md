@@ -180,7 +180,7 @@ deps = {
 
 ### Funciones públicas (las llama la sidebar; todas en `Ui.js`)
 
-Cada una es `function nombre(arg) { return nombre_(createServices_(), arg); }` (las dos de ejecución reciben dos argumentos: `function executeSendPending(token, overwriteConsent) { return executeSendPending_(createServices_(), token, overwriteConsent); }`); los tests llaman a `nombre_` con falsos. Todos los `.js` comparten el espacio global de Apps Script (y el cargador de tests los ejecuta en un solo contexto, `Ui.js` último), así que dos funciones con el mismo nombre se pisan: `applyColumnSetup_(deps, expectedHeaderKey)` vive solo en `Setup.js` y `cancelConfirmation_(deps, token)` solo en `Confirmation.js`; `Ui.js` define sus envoltorios públicos pero no redefine esos `…_`. Los demás `…_` de la tabla (`getPanelState_`, `saveConfig_`, `validateCampaign_`, `prepareTestSend_`, `executeTestSend_`, `prepareSendPending_`, `executeSendPending_`, `getSendProgress_`) viven en `Ui.js` y delegan en `prepareConfirmation_`, `executeConfirmed_`, `readProgress_` y `buildValidationView_`. Ningún `…_` nuevo repite un nombre de otro archivo.
+Cada una es `function nombre(arg) { return nombre_(createServices_(), arg); }` (las dos de ejecución reciben argumentos extra: `executeTestSend(token, overwriteConsent)` y, desde S-02, `executeSendPending` con tres: `function executeSendPending(token, overwriteConsent, filterAcknowledged) { return executeSendPending_(createServices_(), token, overwriteConsent, filterAcknowledged); }`); los tests llaman a `nombre_` con falsos. Todos los `.js` comparten el espacio global de Apps Script (y el cargador de tests los ejecuta en un solo contexto, `Ui.js` último), así que dos funciones con el mismo nombre se pisan: `applyColumnSetup_(deps, expectedHeaderKey)` vive solo en `Setup.js` y `cancelConfirmation_(deps, token)` solo en `Confirmation.js`; `Ui.js` define sus envoltorios públicos pero no redefine esos `…_`. Los demás `…_` de la tabla (`getPanelState_`, `saveConfig_`, `validateCampaign_`, `prepareTestSend_`, `executeTestSend_`, `prepareSendPending_`, `executeSendPending_`, `getSendProgress_`) viven en `Ui.js` y delegan en `prepareConfirmation_`, `executeConfirmed_`, `readProgress_` y `buildValidationView_`. Ningún `…_` nuevo repite un nombre de otro archivo.
 
 | Función | Entrada | Salida | Efectos |
 |---|---|---|---|
@@ -192,7 +192,7 @@ Cada una es `function nombre(arg) { return nombre_(createServices_(), arg); }` (
 | `prepareTestSend(rowNumber)` | entero ≥ 2 | `{ ok, errors, token, view: ConfirmationView }` | Guarda snapshot `kind: 'test'`; no escribe la hoja |
 | `executeTestSend(token, overwriteConsent)` | texto, booleano | `SendResultView` | Envía como mucho 1 correo a la cuenta propia; exige `overwriteConsent === true` si el snapshot tiene `overwriteRows` (D-47) |
 | `prepareSendPending()` | — | `{ ok, errors, token, view: ConfirmationView }` | Guarda snapshot `kind: 'send'`; no escribe la hoja |
-| `executeSendPending(token, overwriteConsent)` | texto, booleano | `SendResultView` | Envío real (Fase B) con progreso; exige `overwriteConsent === true` si el snapshot tiene `overwriteRows` (D-47) |
+| `executeSendPending(token, overwriteConsent, filterAcknowledged)` | texto, booleano, booleano | `SendResultView` | Envío real (Fase B) con progreso; exige `overwriteConsent === true` si el snapshot tiene `overwriteRows` (D-47) y `filterAcknowledged === true` (S-02, corrección de `plans/2026-11-09_seguridad-envios-v2.md`) |
 | `getSendProgress(token)` | texto | `{ found, progress }` | Solo lee la caché; sin lock |
 | `cancelConfirmation(token)` | texto | `{ ok: true }` | Borra el snapshot si existe (sin lock; si ya se consumió, no hace nada) |
 
@@ -279,6 +279,8 @@ Vistas (JSON plano, textos ya saneados):
 - `ids.newToken()`: `Utilities.getUuid()`.
 
 ### Sidebar
+
+> **Nota (2026-11-14):** la presentación de la sidebar descripta en esta sección (orden y agrupación de secciones, estilos, textos de ayuda, iconografía, acordeón y riel) fue reemplazada por `plans/2026-11-14_eclipse-console-ui.md` (D-49, Eclipse Console). Siguen vigentes las reglas del cliente y el contrato con el servidor que se describen aquí.
 
 Un solo archivo `src/Sidebar.html`, sin librerías. Secciones, de arriba hacia abajo:
 

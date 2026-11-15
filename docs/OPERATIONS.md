@@ -1,6 +1,6 @@
-# Guía de operación — Mail Merge V2
+# Guía de operación — Mail Merge V2 (Eclipse Console)
 
-**Estado:** implementado y verificado **solo en forma local** (`LOCAL_VERIFIED`) con servicios de Google simulados. Nada de esta guía se probó todavía en una cuenta real de Google: todo lo que depende del runtime de Apps Script, de Gmail o de Drive figura como `PENDING LIVE VALIDATION` en la checklist del final. El estado de cada criterio de aceptación está en [`ACCEPTANCE_STATUS.md`](ACCEPTANCE_STATUS.md); el diseño, en `plans/2026-11-09_mail-merge-v2.md`.
+**Estado:** implementado y verificado **solo en forma local** (`LOCAL_VERIFIED`) con servicios de Google simulados. Nada de esta guía se probó todavía en una cuenta real de Google: todo lo que depende del runtime de Apps Script, de Gmail o de Drive figura como `PENDING LIVE VALIDATION` en la checklist del final. El estado de cada criterio de aceptación está en [`ACCEPTANCE_STATUS.md`](ACCEPTANCE_STATUS.md); el diseño, en `plans/2026-11-09_mail-merge-v2.md` y, para la interfaz del panel (Eclipse Console), en `plans/2026-11-14_eclipse-console-ui.md`.
 
 ## Qué hace
 
@@ -29,7 +29,13 @@ La fila 1 es la de encabezados (D-02). Los encabezados se escriben exactamente a
 
 ## El panel `Mail Merge`
 
-El menú `Mail Merge` tiene un solo ítem, **`Abrir Mail Merge`** (D-25), que abre el panel lateral (300 px de ancho). Ya no hay diálogos emergentes: todo se ve y se confirma en el panel. Sus secciones, de arriba hacia abajo:
+El menú `Mail Merge` tiene un solo ítem, **`Abrir Mail Merge`** (D-25), que abre el panel lateral (300 px de ancho, título `Mail Merge`). Ya no hay diálogos emergentes: todo se ve y se confirma en el panel. Dentro del panel, el producto se presenta como **Mail Merge ZB — Eclipse Console** (D-49, D-52): el menú, el título del panel y el nombre del archivo `Sidebar` no cambian. El diseño es un tema oscuro fijo (D-51), pensado para 300 px; su diseño y sus decisiones están en `plans/2026-11-14_eclipse-console-ui.md`. Nada de esto se vio todavía dentro de Sheets (ítems 22 a 26 de la checklist).
+
+**Cabecera y riel.** Arriba están el nombre `Mail Merge ZB`, el subtítulo `Eclipse Console` y el botón `Cerrar`, que cierra el panel. Debajo, un riel de cuatro puntos numerados (`Etapas de la campaña`: Campaña, Validación, Prueba, Envío) marca la etapa en la que estás: los puntos anteriores figuran como hechos, el actual resaltado y los siguientes como pendientes. El riel solo informa; no bloquea nada.
+
+**Cuatro pasos en acordeón.** `Campaña`, `Validación`, `Prueba` y `Envío` son secciones plegables numeradas. Cada cabecera muestra el número, el título, un resumen corto (por ejemplo el nombre de la campaña, `N elegibles · M errores` o `N correos`) y un chip de estado: `Sin guardar` / `Lista` en el paso 1; `Pendiente`, `Preparar`, `Bloqueada` o `Lista` en el paso 2; `Pendiente`, `Revisión`, `Vencida`, `Enviando` o `Hecha` en los pasos 3 y 4. Por defecto hay un solo paso abierto: el panel abre solo el que corresponde a la fase (primera apertura, campaña guardada, validación correcta, confirmación, resultado) y mueve el foco a su cabecera. Podés abrir cualquier paso a mano en cualquier momento; el acordeón nunca habilita ni deshabilita un botón. El único límite es de seguridad: un paso con una confirmación viva (3 o 4) y la consola mientras se envía **no se pueden plegar**, para que la lista de destinatarios y el progreso no queden ocultos. El botón principal de cada fase se resalta, pero todos los botones existen siempre y el servidor valida todo de nuevo.
+
+**Primera apertura.** Sin configuración guardada, el paso 1 queda abierto con una ayuda de bienvenida (cuatro pasos y que nada se envía sin tu confirmación explícita). Si tu cuenta no tiene borradores de Gmail, el panel te pide crear uno con los marcadores `{{Encabezado}}` y volver a abrirlo.
 
 ### 1. Campaña
 
@@ -39,33 +45,50 @@ El menú `Mail Merge` tiene un solo ítem, **`Abrir Mail Merge`** (D-25), que ab
 - **Reply-To (opcional)**: una sola dirección válida.
 - **Nombre de campaña (opcional)**: hasta 80 caracteres; se guarda sin saltos de línea ni tabulaciones y recortado. Si lo dejás vacío, cada confirmación (cada envío y cada prueba) genera un ID de 8 caracteres, distinto en cada una, que se muestra en la confirmación y se escribe en `Campaña` de todas las filas de esa ejecución (D-39). Si querés agrupar varias tandas bajo un mismo nombre, escribilo.
 
-El botón `Guardar` vuelve a validar todo en el servidor. La configuración se guarda **por usuario** (D-08): cada operador configura su propia campaña, con su propio borrador. Una configuración guardada con la V1 sigue funcionando (sin nombre de campaña).
+El botón `Guardar` vuelve a validar todo en el servidor. La configuración se guarda **por usuario** (D-08): cada operador configura su propia campaña, con su propio borrador. Una configuración guardada con la V1 sigue funcionando (sin nombre de campaña). Guardar de nuevo la configuración borra el resultado de la validación mostrado: hay que volver a validar.
 
-### 2. Validación
+### 2. Validación (el radar)
 
-El botón `Validar` revisa la campaña **sin enviar ni escribir nada**: ni en la hoja ni en la caché (AC-33). Muestra:
+El botón `Validar` revisa la campaña **sin enviar ni escribir nada**: ni en la hoja ni en la caché (AC-33). El resultado se muestra como un radar:
 
-- pestaña, asunto del borrador, remitente, Reply-To y cuota diaria disponible;
-- cantidad de filas válidas, inválidas (con sus motivos) y excluidas (con el motivo de exclusión);
-- los adjuntos comunes del borrador y **todas** las filas que se enviarían, `Fila N → destinatario: archivo1, archivo2` (nombres de Drive, nunca URLs), hasta 500 filas y luego `y N filas más` (D-42);
-- un aviso, sin casilla, si alguna fila a enviar ya tiene valores en `Fecha`, `Campaña` o `Detalle` que se reemplazarían (D-47; la confirmación pedirá tu consentimiento);
-- si la pestaña necesita preparar sus columnas, qué se renombra, qué se agrega, los bloqueos y el botón `Preparar columnas`.
+- cuatro indicadores: `Elegibles`, `Con errores`, `Excluidas` y `Cuota` (la cuota diaria de Gmail, o `no disponible` si no se pudo leer), y una barra segmentada que reparte las filas entre elegibles, con errores y excluidas (solo informativa, no reemplaza a los números);
+- pestaña, asunto del borrador, remitente, Reply-To, los conteos y los adjuntos comunes del borrador;
+- grupos plegables: `Excluidas por motivo` (plegado por defecto), `Filas con errores` (con sus motivos) y `Filas a enviar`, con todas las filas que se enviarían, `Fila N → destinatario: archivo1, archivo2` (nombres de Drive, nunca URLs), hasta 500 filas y luego `y N filas más` (D-42);
+- avisos con ayuda cuando corresponde: cuota desconocida (el envío puede cortarse si se agota), cuota menor que las filas elegibles (queda pendiente el resto), todas las filas excluidas (revisá `Resultado`, filas ocultas y filtros) y, si alguna fila a enviar ya tiene valores en `Fecha`, `Campaña` o `Detalle` que se reemplazarían, un aviso sin casilla (D-47; la confirmación pedirá tu consentimiento);
+- si la pestaña necesita preparar sus columnas, qué se renombra, qué se agrega, los bloqueos (con una ayuda para resolverlos a mano) y el botón `Preparar columnas`.
 
-Usalo antes de cada envío y cada vez que cambies la hoja o el borrador.
+Si la validación encuentra problemas, el mensaje lo dice con conteos (`La validación encontró problemas: N globales · M filas con errores`). Usala antes de cada envío y cada vez que cambies la hoja o el borrador.
 
 ### 3. Prueba
 
-Indicás la fila a probar y `Revisar prueba` prepara una confirmación para esa sola fila; `Enviar prueba` la envía y `Cancelar` la descarta. Ver "Envío de prueba".
+Indicás la `Fila a probar` (entero, 2 o mayor); después de una validación correcta, una ayuda lista hasta cinco filas candidatas (`fila (dirección)`) y cuántas más hay. `Revisar prueba` prepara una confirmación para esa sola fila; `Enviar prueba` la envía y `Cancelar` la descarta. La prueba es opcional: `Ir a Envío` abre el paso 4 sin llamar al servidor. Ver "Envío de prueba".
 
 ### 4. Envío
 
-`Revisar envío` prepara la confirmación de todas las filas pendientes; `Enviar N correos` envía y `Cancelar` la descarta. Ver "Envío real".
+`Revisar envío` prepara la confirmación de todas las filas pendientes; `Enviar N correos` envía y `Cancelar` la descarta. Ver "Envío real". Mientras revisás, el paso recuerda que **las vistas de filtro de Sheets no excluyen filas** (solo los filtros normales y las filas ocultas a mano).
 
-### 5. Progreso y resultados
+### Revisión segura: compuertas y `Falta: …`
 
-Contadores, barra de progreso, tabla por fila (`Fila`, `Destinatario`, `Resultado`, `Detalle`), motivo de corte y resumen final. Ver "Progreso y resultados".
+Las confirmaciones (prueba y envío) tienen la misma forma: una tarjeta con el aviso del servidor, tal cual, y el resumen (campaña, pestaña, asunto, remitente, Reply-To, filas a enviar, filas con errores y excluidas), los adjuntos comunes como chips, la lista **completa** de destinatarios (una línea por fila, hasta 500, sin desplazamiento interno) cerrada con `── fin de la lista (N) ──`, y un bloque `Verificación` con las compuertas:
 
-El botón `Cerrar` cierra el panel.
+- **Revisé todos los destinatarios listados…** (solo en el envío real): obligatoria, también en el servidor (S-02).
+- **Consentimiento para reemplazar `Fecha`, `Campaña` o `Detalle`**: solo si hay filas que reemplazar (D-47), con la lista de filas y columnas. En el envío, una ayuda recuerda que esos valores no se pueden recuperar desde esta herramienta.
+- Las casillas nacen **sin marcar** en cada confirmación nueva y vuelven a estarlo al cancelar, vencer, terminar o fallar; no hay una opción "marcar todo".
+- Mientras falte alguna, una línea de texto lo dice (`Falta: marcar la casilla de filtros`, `Falta: marcar el consentimiento` o `Falta: marcar las 2 casillas`) y el botón de envío sigue deshabilitado. El estado no depende solo del color. La confirmación de la prueba solo pide consentimiento si hay filas que reemplazar y trae una línea fija en la verificación (`Revisá la fila y el destinatario antes de enviar la prueba.`).
+- El botón `Enviar prueba` / `Enviar N correos` es único, vive dentro del paso y es el principal de la fase; `Cancelar` es secundario.
+- El **vencimiento** se muestra como hora fija, `Vence a las HH:MM (10 min)` (en `test-expiry` y `send-expiry`); no hay cuenta regresiva. Al vencer, el chip del paso pasa a `Vencida`, el botón se deshabilita, aparece `La confirmación venció; volvé a revisar.` y el paso se puede plegar de nuevo.
+
+### 5. Progreso y resultados (la consola)
+
+Aparece al empezar un envío o una prueba y no se puede plegar mientras se envía. Muestra seis contadores (`Total`, `Procesadas`, `Aceptadas por Gmail`, `Omitidas`, `Para revisar` —destacado cuando es mayor que cero— y `Pendientes`), la barra de progreso con la fracción `procesadas/total`, el motivo de corte, el resumen final y el registro por fila (`Fila`, `Destinatario`, `Resultado`, `Detalle`; en 300 px cada fila se apila y trae un chip de estado). El panel no calcula tiempos, tasas ni porcentajes. Al terminar, la consola recibe el foco. Si hay filas para revisar aparece una tarjeta con la conciliación en cinco pasos y, si quedan filas pendientes, una ayuda para volver a `Revisar envío`; si el panel no recibe respuesta del servidor, queda visible el último progreso y la guía de abajo. Ver "Progreso y resultados" y "Conciliación manual".
+
+### Ayudas contextuales
+
+Las ayudas son textos fijos que el panel muestra u oculta según datos reales de la validación, la confirmación y el resultado (nunca por comparar textos del servidor, que se muestran tal cual): bienvenida y falta de borradores (paso 1); validar antes de enviar; preparar columnas y bloqueos; cuota desconocida o insuficiente; todo excluido; filas a reemplazar; opcionalidad de la prueba y filas candidatas; vistas de filtro y consentimiento (al revisar el envío); conciliación, pendientes, resultado incierto y qué hacer después de una prueba (en la consola). No hay IA ni llamadas adicionales.
+
+### Accesibilidad
+
+Todos los controles tienen etiqueta; los pasos son botones con `aria-expanded`; el punto actual del riel se marca con `aria-current`; los mensajes de cada paso y el estado del progreso se anuncian como `status`, una región `status` global anuncia los cambios de fase y `Enviando: N de M` solo cuando cambia `processed`, y la guía de resultado incierto y el motivo de corte se anuncian como `alert`. El foco visible está definido y las animaciones se desactivan con `prefers-reduced-motion`. Los pares de colores de texto se verifican por test contra el contraste AA; con lectores de pantalla dentro de Sheets queda `PENDING LIVE VALIDATION` (ítem 24).
 
 ## Preparar columnas
 
@@ -311,6 +334,25 @@ Nada de esto se puede comprobar localmente. Antes de cualquier uso real, cada í
 19. Tiempo real de cada `getSendProgress` y su efecto sobre la cuota de ejecuciones simultáneas por usuario.
 20. **OPEN (due diligence):** `setTimeout` dentro del iframe de `HtmlService` (no documentado para el sandbox) y el cierre del panel con `google.script.host.close()`.
 21. Que cerrar el panel durante un envío no corte la ejecución del servidor y que el resultado quede completo en `Resultado` y `Detalle`.
+22. Render real en el iframe de `HtmlService` de `<style>` con custom properties, SVG inline, `mask-image` con `data:` URI, `color-scheme`, `:focus-visible` y `prefers-reduced-motion` (Eclipse Console). **OPEN (due diligence):** que el iframe no los reescriba ni los bloquee, y que `prefers-reduced-motion` se evalúe igual dentro del iframe anidado de Sheets.
+23. Aspecto del panel oscuro junto a una hoja clara de Sheets y legibilidad de los controles nativos (`select`, `input`, `progress`, casillas) con `color-scheme: dark`.
+24. Comportamiento del acordeón, del foco y de los anuncios `role="status"` / `role="alert"` con lectores de pantalla dentro de Sheets.
+25. Rendimiento y desplazamiento con 500 filas en la confirmación con el nuevo marcado (amplía el ítem 17).
+26. Tamaño del HTML servido por `createHtmlOutputFromFile` con el CSS e iconos nuevos (no hay límite publicado).
+
+Los ítems 13 (`getSendProgress` en paralelo), 17 (500 filas) y 20 (`setTimeout` en el iframe) siguen vigentes.
+
+### Checklist visual de la vista previa local (AC-64, manual)
+
+`tools/preview-sidebar.js` genera una página que muestra `src/Sidebar.html` con un `google.script.run` falso y datos ficticios (`example.test`), para ver el aspecto del panel en un navegador sin Google. Es una herramienta manual: **esta checklist todavía no se ejecutó** y AC-64 sigue `PENDING (manual)`; quien la recorra tiene que registrar el resultado en `ACCEPTANCE_STATUS.md`.
+
+1. `node --check tools/preview-sidebar.js` y `node tools/preview-sidebar.js [estado]` (con Node portable, ver `README.md`). Escribe `tmp/sidebar-preview.html` (carpeta ignorada por Git). No toca `src/` ni se sube a Apps Script.
+2. Abrí `tmp/sidebar-preview.html` en Chrome o Edge. El panel mide 300 px; cambiá de estado con la barra de la vista previa o con `?state=<estado>`.
+3. Recorré los 13 estados a 300 px: `inicial`, `sin-borradores`, `configurada`, `setup`, `bloqueada`, `lista`, `prueba`, `envio`, `consentimiento`, `enviando`, `terminada`, `revisar` e `incierta`. Los que requieren recorrer el flujo (`prueba`, `envio`, `enviando`, `terminada`, `revisar`, `incierta`) se alcanzan con los botones reales del panel; el falso solo decide qué responde cada llamada.
+4. En cada estado comprobá: **sin desplazamiento horizontal** del panel; **foco visible** al navegar con el teclado (Tab); **chips y contadores legibles** (texto no cortado, estado también en texto y no solo en color); y los pasos y botones esperados para la fase.
+5. Estado `lista-500` (500 filas ficticias en la validación y en las confirmaciones): la lista completa se lee sin scroll interno y con fin de lista.
+
+**Alcance:** la vista previa valida el aspecto en un navegador real, pero **no valida lo que `HtmlService` ignora o reescribe** (por ejemplo, las etiquetas `<meta>` escritas en el archivo, o el sandbox del iframe) **ni reemplaza los ítems 22 a 26** de la checklist en vivo. Las capturas para GitHub, cuando existan, van en `docs/screenshots/`; hoy no hay ninguna.
 
 ## Activación futura con `clasp` (descripta, no ejecutada)
 
@@ -319,7 +361,7 @@ Estos pasos **no se ejecutaron** y no forman parte del desarrollo local. Requier
 1. Obtener la autorización explícita de los scopes (D-24) y definir la hoja y la cuenta de prueba.
 2. Instalar `clasp` en la máquina del operador autorizado (`npm install -g @google/clasp`) y habilitar la Apps Script API en la configuración de usuario de Apps Script de esa cuenta.
 3. `clasp login` con la cuenta de prueba.
-4. Crear el proyecto vinculado a la hoja de prueba con `rootDir` en `src/` (por ejemplo `clasp create --type sheets --title "Mail Merge" --rootDir src`), o vincular uno existente con `clasp clone <scriptId> --rootDir src`.
+4. Crear el proyecto vinculado a la hoja de prueba, con `src/` como raíz: `clasp create-script --parentId <id de la hoja de prueba> --rootDir src` (`--parentId` vincula el script a la hoja existente; `--type sheets` crearía una hoja nueva), o vincular uno existente con `clasp clone-script <scriptId> --rootDir src`. Los nombres anteriores `create` y `clone` figuran como alias: confirmalo contra la documentación vigente de `clasp` al usarlos.
 5. Verificar que `.clasp.json` y `.clasprc.json` **no** queden en Git (ya están en `.gitignore`): contienen el ID del script y credenciales locales.
 6. `clasp push` para subir `src/` (incluido `appsscript.json`).
 7. Abrir la hoja de prueba, recargarla, elegir `Mail Merge → Abrir Mail Merge` y revisar la pantalla de consentimiento contra la lista de scopes.

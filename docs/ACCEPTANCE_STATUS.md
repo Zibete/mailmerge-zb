@@ -2,12 +2,13 @@
 
 **Nivel alcanzado: `LOCAL_VERIFIED`.** No es `LIVE_VERIFIED`: ninguna prueba se ejecutó contra Google (sin `clasp`, sin OAuth, sin envíos reales, ni siquiera de prueba). Los tests usan servicios simulados (`tests/helpers/fakes.js`), un DOM falso para la sidebar (`tests/helpers/fake-dom.js`) y fixtures sintéticos (`tests/fixtures/campaign.js`, con la pestaña V2 y `createLegacyFixture()` con los encabezados V1). Un test local que pasa no prueba la integración con Google: las partes que dependen del runtime de Apps Script, Gmail o Drive se listan al final como `PENDING LIVE VALIDATION`.
 
-Fecha de la verificación: 2026-11-09. Plan: `plans/2026-11-09_mail-merge-v2.md` (evoluciona `plans/2026-11-08_mail-merge-v1.md`). Guía de operación: [`OPERATIONS.md`](OPERATIONS.md).
+Fecha de la verificación: 2026-11-09 (V2) y 2026-11-15 (Eclipse Console, AC-56 a AC-64). Planes: `plans/2026-11-09_mail-merge-v2.md` (evoluciona `plans/2026-11-08_mail-merge-v1.md`) y `plans/2026-11-14_eclipse-console-ui.md` (diseño vigente de la interfaz). Guía de operación: [`OPERATIONS.md`](OPERATIONS.md).
 
 ## Leyenda
 
 - `PASS (local mock)`: cubierto por tests automáticos que pasan con servicios simulados. En AC-29 y AC-30 la evidencia es la salida de comandos locales, no un mock.
 - `RETIRADO`: el criterio describe un comportamiento que la V2 elimina por decisión; se indica qué criterio lo reemplaza.
+- `PENDING (manual)`: el criterio se verifica con una acción manual de una persona (AC-64) y todavía no se ejecutó.
 - `FAIL`: un test que lo cubre falla. **No hay ninguno.**
 - `PENDING LIVE VALIDATION`: no se puede comprobar localmente.
 - Columna "En vivo": número del ítem de la checklist [`PENDING LIVE VALIDATION`](#verificaciones-en-vivo-pendientes) que completa ese criterio en el runtime real, si corresponde.
@@ -23,18 +24,20 @@ Comando (desde la raíz del proyecto, Git Bash, Node portable v20.11.1, sin red 
 export PATH="/c/Users/matias.peralta_exter/nodejs/node-v20.11.1-win-x64:$PATH" && node --test
 ```
 
-Resumen real:
+Resumen real (ejecución del 2026-11-15, rama `feat/ui-ux-release`, con los 44 tests de Eclipse Console):
 
 ```text
-1..322
-# tests 322
+1..366
+# tests 366
 # suites 0
-# pass 322
+# pass 366
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
 ```
+
+Conteos por archivo de Eclipse Console (`node --test <archivo>`): `sidebar-console.test.js` 41, `ui.test.js` 36 (33 del cierre de V2 más 3), `sidebar.test.js` 32.
 
 Conteos del **cierre histórico original de V2** (antes de los tests de seguridad; no representan la ejecución actual), por archivo (`node --test <archivo>`): `attachments.test.js` 12, `confirmation.test.js` 56, `manifest.test.js` 7, `preflight.test.js` 25, `send.test.js` 44, `services.test.js` 23, `setup.test.js` 29, `sheet.test.js` 24, `sidebar.test.js` 31, `template.test.js` 13, `test-send.test.js` 14, `ui.test.js` 33.
 
@@ -123,6 +126,30 @@ Por decisión del plan V2 (no para que los tests pasen), los tests V1 que probab
 - AC-31 (V1: `Scheduled Date` excluye) → retirado; lo reemplaza AC-43.
 - D-07 → D-40 (la prueba se rechaza sobre filas no elegibles y una excepción de Gmail deja `REVISAR`); D-14 → D-36; D-17 y D-18 → retirados con el registro; D-23 → D-42.
 
+## Criterios AC-56 a AC-64 (Eclipse Console, 2026-11-15)
+
+Plan: `plans/2026-11-14_eclipse-console-ui.md` (D-49 a D-60). Cambian solo la presentación de `src/Sidebar.html`, el DOM falso (`tests/helpers/fake-dom.js`, D-50), los fixtures (`tests/fixtures/sidebar-views.js`), la vista previa (`tools/preview-sidebar.js`) y la documentación; `src/*.js` y `src/appsscript.json` no cambian respecto de la base del plan. Estado: **`LOCAL_VERIFIED`** para lo ejecutado (suite offline con DOM falso); todo lo que depende del render real en Apps Script y de un navegador es `PENDING LIVE VALIDATION` o `PENDING (manual)`.
+
+| ID | Criterio | Estado | Tests que lo cubren (archivo: título) | En vivo |
+|---|---|---|---|---|
+| AC-56 | Command Center: la fase se deriva del estado (D-56), el acordeón abre el paso de la fase con foco, resume los pasos cerrados, marca el primario, nunca colapsa un paso con confirmación viva ni la consola en ejecución, y no altera el `disabled` que calcula `refreshControls()` | `PASS (local mock)` | `tests/sidebar-console.test.js`: «D-57 / D-54: los pasos, el riel y la consola existen con aria-controls hacia su cuerpo, sin crear elementos ni temporizadores al cargar»; «AC-56 / D-56: al cargar sin configuración la fase es sin-configurar, el paso 1 está abierto y Guardar es el primario»; «AC-56 / D-56: con configuración guardada la fase es configurada y Validar es el primario»; «AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el paso 2»; «AC-56 / D-57: el toggle de un paso cerrado lo abre y el del paso con confirmación viva está deshabilitado»; «AC-56 / D-56: preparar columnas, bloqueada, revisando-envio, enviando, terminada e incierta se derivan del estado»; «D-56: las fases no cambian disabled de ningún botón respecto de refreshControls»; «AC-56 / D-57: cancelar o vencer una confirmación deja abierto el paso de origen con su mensaje»; «AC-56 / D-57: el rechazo de una prueba vuelve al paso 3 con el motivo»; «AC-56 / D-57: el rechazo de un envío anuncia el motivo en status-live» | 24 |
+| AC-57 | Preflight Radar: tiles, barra segmentada y grupos reflejan exactamente `ValidationView`; cuota desconocida o insuficiente y "todo excluido" tienen ayuda; la validación sigue sin crear `<input>` y conserva sus textos | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-57: los tiles muestran válidas, con errores, excluidas y cuota exactamente como la ValidationView»; «AC-57 / D-58: cuota menor que las filas válidas muestra hint-quota-short con el número»; «AC-57 / D-58: todas las filas excluidas muestra hint-all-excluded»; «AC-57: los grupos de exclusiones, errores y filas se pliegan por botón con aria-expanded y sin ocultar nada en la confirmación»; «AC-57 / D-35: el plan de columnas se muestra como diff y Preparar columnas sigue llamando a applyColumnSetup con headerKey»; «AC-54 / D-47 (regresión): overwriteRows sigue siendo un aviso sin casilla y la validación no crea inputs»; «AC-57: el mensaje de validación con problemas informa los conteos»; «AC-57: revalidar no desprende los elementos estáticos del radar» | 22 |
+| AC-58 | Safe Send Review: aviso literal, resumen, lista completa con fin de lista, compuertas desmarcadas en cada confirmación nueva, estado de compuerta en texto, botón `Enviar N correos` único y dentro del paso, vencimiento como hora fija | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-58: la confirmación de envío muestra el aviso, el resumen, la lista completa con fin de lista y las compuertas desmarcadas»; «AC-58 / D-53: el vencimiento se muestra como hora fija y al vencer el chip dice Vencida y el toggle se rehabilita»; «AC-58 / P0-2 / AC-54 (regresión): las casillas nacen desmarcadas en cada confirmación nueva y el botón conserva el texto Enviar N correos»; «AC-58: la confirmación de prueba muestra Para: con la cuenta y su compuerta de consentimiento cuando corresponde»; «AC-58: la confirmación recibe el foco en su compuerta porque el toggle del paso está deshabilitado»; «AC-58: hint-filter-views se muestra solo en revisando-envio y hint-consent solo con consentRequired»; `tests/ui.test.js`: «AC-58: no existe ningún botón de envío fuera de la sección del paso» | 22, 25 |
+| AC-59 | Live Execution Console: tabla con cuatro celdas por fila y clase por lista cerrada, fracción `processed/total`, anuncio solo al cambiar `processed`, `Para revisar` destacado con pasos de conciliación, pendientes con ayuda, falla de transporte y rechazo como hoy | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-59 / D-55: la tabla conserva tbody con filas de cuatro celdas y asigna la clase de estado por lista cerrada»; «AC-59: progress-fraction muestra procesadas/total y status-live anuncia solo cuando cambia processed»; «AC-59: Para revisar mayor que cero destaca el tile y muestra hint-review; pendientes muestra hint-pending y Revisar envío»; «AC-59 / D-45 (regresión): la falla de transporte deja fase incierta, la guía exacta en progress-guidance con role alert y hint-uncertain»; «AC-59 / D-45 (regresión): lock no disponible vuelve al paso 4 con el motivo y sin consola»; «AC-59: al terminar se abre la consola con foco en su título» | 22, 25 |
+| AC-60 | Contextual Intelligence: cada ayuda `hint-*` aparece solo con su condición de datos reales; ninguna depende de comparar textos del servidor; primera apertura con bienvenida | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-60 / D-58: primera apertura sin configuración muestra hint-welcome; con configuración no»; «AC-60: sin borradores muestra hint-no-drafts»; «AC-60: cada ayuda aparece solo con su condición»; «AC-60: hint-test-row lista hasta cinco filas y resume el resto por textContent»; «AC-60: las ayudas no comparan textos del servidor»; «AC-60: guardar la configuración de nuevo vacía el radar y vuelve a pedir validar»; «AC-60: hint-review es una tarjeta con lista de cinco pasos de conciliación» | — |
+| AC-61 | Accesibilidad dinámica: `aria-expanded`, `aria-current`, foco gestionado, `role="status"` / `role="alert"` según D-60, `label for` en todos los controles, `:focus-visible` definido | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-61 / D-50: aria-expanded y aria-current se actualizan y el foco sigue al paso abierto»; «AC-61 / D-60: los mensajes conservan role status y la guía y el motivo de corte tienen role alert»; «AC-61: todos los controles tienen label for y el CSS define :focus-visible»; `tests/sidebar.test.js`: «fake-dom: document y los elementos lanzan fuera del subconjunto permitido» | 24 |
+| AC-62 | Contraste: todos los pares de tokens de texto ≥ 4.5:1 y los indicadores ≥ 3:1, verificado por test sobre el CSS real | `PASS (local mock)` | `tests/sidebar-console.test.js`: «AC-62 / D-51: los tokens de color cumplen WCAG AA» | 22, 23 |
+| AC-63 | Higiene estática: un solo `<script>`, sin recursos externos, sin `svg` con `id`, sin `setInterval`/`requestAnimationFrame`, exactamente dos `setTimeout(`, `color-scheme` oscuro, `[hidden]` con `!important`, `prefers-reduced-motion` | `PASS (local mock)` | `tests/ui.test.js`: «AC-63 / D-53: src/Sidebar.html no usa setInterval, requestAnimationFrame ni más de un setTimeout encadenado nuevo»; «AC-63 / D-54: src/Sidebar.html no carga recursos externos ni define svg con id» | 22, 26 |
+| AC-64 | Validación visual local: `tools/preview-sidebar.js` genera una vista previa con los 13 estados (más `lista-500`) a partir de fixtures ficticios, sin tocar `src/`; la checklist visual está en `docs/OPERATIONS.md`. Su ejecución se registra solo cuando ocurre | `PENDING (manual)` | Sin test automático (herramienta manual). Local: `node --check tools/preview-sidebar.js` y la generación de `tmp/sidebar-preview.html` (ver "Evidencia de AC-64"). Abrirla en un navegador a 300 px y recorrer la checklist **no se ejecutó** | 22 a 26 (no los reemplaza) |
+
+**Resumen:** AC-56 a AC-63 `PASS (local mock)` (8 criterios), AC-64 `PENDING (manual)`, 0 `FAIL`. Ninguno está verificado en Google. Los 41 tests de `tests/sidebar-console.test.js` y los 3 tests nuevos de `tests/ui.test.js` suman los 44 tests agregados a los 322 de la base (366 en total); el test del helper de `tests/sidebar.test.js` se amplió, no se agregó. Todo test del plan queda asignado a un criterio: en AC-57 se cita también el de regresión «AC-54 / D-47 (regresión): overwriteRows sigue siendo un aviso sin casilla y la validación no crea inputs».
+
+### Evidencia de AC-64
+
+- `node --check tools/preview-sidebar.js` y `node tools/preview-sidebar.js` generan `tmp/sidebar-preview.html` (carpeta ignorada por Git) a partir de `src/Sidebar.html` y de fixtures con datos ficticios (`example.test`); no modifican `src/`, no usan red ni cuentas de Google. Estados: `inicial`, `sin-borradores`, `configurada`, `setup`, `bloqueada`, `lista`, `prueba`, `envio`, `consentimiento`, `enviando`, `terminada`, `revisar`, `incierta` y `lista-500` (500 filas). Se elige con `?state=<estado>` o con la barra de la vista previa; el panel mide 300 px.
+- **Lo que se ve, descripto y no capturado:** panel oscuro (`color-scheme: dark`) con cabecera `Mail Merge ZB` / `Eclipse Console` y botón `Cerrar`, riel de cuatro etapas, cuatro pasos en acordeón con chip y resumen, radar con cuatro indicadores y barra segmentada, revisión con compuertas y `Falta: …`, y consola con seis contadores, barra de progreso y registro apilado por fila. No hay capturas en `docs/screenshots/`: no se tomaron y el repositorio no las referencia.
+- **No se ejecutó la checklist visual** de `docs/OPERATIONS.md` en un navegador (ni Chrome ni Edge): AC-64 queda `PENDING (manual)` hasta que una persona la recorra y lo registre aquí. Aun así, la vista previa no valida lo que HtmlService ignora o reescribe ni reemplaza los ítems 22 a 26 en vivo.
+
 ## Cobertura adicional de decisiones del plan
 
 Tests que cubren decisiones `D-xx` y requisitos `R-xx` sin un AC propio, o además de él:
@@ -210,7 +237,7 @@ Sin secretos versionados: `git ls-files | grep -iE "\.env|clasp|credential|token
 
 ## Evidencia de AC-30
 
-- Comando: `node --test` con Node portable v20.11.1, sin `npm install`, sin `package.json` ni dependencias. Resultado: 322 tests, 322 pass, 0 fail.
+- Comando: `node --test` con Node portable v20.11.1, sin `npm install`, sin `package.json` ni dependencias. Resultado en el cierre de la V2: 322 tests, 322 pass, 0 fail (la ejecución actual, con Eclipse Console, está en "Resultado de la suite").
 - Los tests solo cargan módulos del propio Node (`node:test`, `node:assert/strict`, `node:vm`, `node:fs`, `node:path`, `node:crypto`) y los helpers locales; ningún archivo de `tests/` ni de `src/` hace pedidos de red (`http`, `https`, `net`, `fetch`, `UrlFetchApp`).
 - Los servicios de Google (`SpreadsheetApp`, `GmailApp`, `DriveApp`, `LockService`, `MailApp`, `PropertiesService`, `CacheService`, `Session`, `Utilities`, `HtmlService`) y el DOM de la sidebar se reemplazan por falsos; no hay credenciales, tokens ni IDs reales de archivos.
 - Sintaxis: `node --check` sin errores sobre los 26 archivos `src/*.js` (10) y `tests/**/*.js` (16: 12 de tests, 3 helpers y 1 fixture); `src/appsscript.json` es JSON válido; `git diff --check` sin salida.
@@ -257,3 +284,8 @@ Todas `PENDING LIVE VALIDATION`. El detalle y los pasos de activación (descript
 19. Tiempo real de cada `getSendProgress` y su efecto sobre la cuota de ejecuciones.
 20. OPEN: `setTimeout` en el iframe de `HtmlService` y `google.script.host.close()`.
 21. Que cerrar la sidebar durante un envío no corte la ejecución del servidor.
+22. Render real en el iframe de HtmlService de `<style>` con custom properties, SVG inline, `mask-image` con `data:` URI, `color-scheme`, `:focus-visible` y `prefers-reduced-motion` (Eclipse Console; OPEN: que el iframe no los reescriba ni los bloquee, y que `prefers-reduced-motion` se evalúe igual dentro del iframe anidado de Sheets).
+23. Aspecto del panel oscuro junto a una hoja clara de Sheets y legibilidad de los controles nativos (`select`, `input`, `progress`, casillas) con `color-scheme: dark`.
+24. Comportamiento del acordeón, del foco y de los anuncios `role="status"` / `role="alert"` con lectores de pantalla dentro de Sheets.
+25. Rendimiento y desplazamiento con 500 filas en la confirmación con el nuevo marcado (amplía el ítem 17).
+26. Tamaño del HTML servido por `createHtmlOutputFromFile` con el CSS e iconos nuevos (no hay límite publicado).
