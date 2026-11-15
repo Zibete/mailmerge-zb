@@ -587,3 +587,223 @@ test('AC-61 / D-50: aria-expanded y aria-current se actualizan y el foco sigue a
   assert.ok(STEP_IDS.every((n) => railClass(n) === 'rail__dot is-done'));
   assert.equal(dom.focusedId(), 'console-title');
 });
+
+// --- Preflight Radar (AC-57, D-58) ------------------------------------------
+
+const RADAR_HINTS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite'];
+
+// Una validación correcta cierra el paso 2 (abre el 3): se reabre a mano para
+// mirar el radar, como haría el operador.
+function radar(variant, dom = loaded()) {
+  validated(variant, dom);
+  if (!dom.isVisible('step-2-body')) {
+    dom.click('step-2-toggle');
+  }
+  return dom;
+}
+
+function visibleRadarHints(dom) {
+  return RADAR_HINTS.filter((id) => dom.isVisible(id));
+}
+
+test('AC-57: los tiles muestran válidas, con errores, excluidas y cuota exactamente como la ValidationView', () => {
+  const dom = radar('ok');
+  assert.equal(dom.text('tile-valid-value'), '2');
+  assert.equal(dom.text('tile-invalid-value'), '1');
+  assert.equal(dom.text('tile-excluded-value'), '1');
+  assert.equal(dom.text('tile-quota-value'), '95');
+  assert.equal(dom.isVisible('validation-result'), true);
+  assert.deepEqual(visibleRadarHints(dom), []);
+
+  // Barra segmentada: clase fija más ancho discreto, texto con el conteo, sin style.
+  assert.equal(dom.byId('meter-valid').className, 'meter__seg meter__seg--valid w-5');
+  assert.equal(dom.byId('meter-invalid').className, 'meter__seg meter__seg--invalid w-3');
+  assert.equal(dom.byId('meter-excluded').className, 'meter__seg meter__seg--excluded w-3');
+  assert.equal(dom.text('meter-valid'), '2');
+  assert.equal(dom.text('meter-invalid'), '1');
+  assert.equal(dom.text('meter-excluded'), '1');
+  assert.ok(dom.text('validation-lines').includes('Cuota diaria restante de Gmail: 95'));
+  assert.ok(dom.text('validation-result').includes('Cuota diaria restante de Gmail: 95'));
+
+  // Sin filas, la barra queda en w-0.
+  const empty = radar('setup');
+  assert.equal(empty.byId('meter-valid').className, 'meter__seg meter__seg--valid w-0');
+  assert.equal(empty.byId('meter-excluded').className, 'meter__seg meter__seg--excluded w-0');
+
+  // Cuota desconocida.
+  const unknown = radar('cuota-nula');
+  assert.equal(unknown.text('tile-quota-value'), 'no disponible');
+  assert.equal(unknown.isVisible('hint-quota-unknown'), true);
+  assert.equal(unknown.isVisible('hint-quota-short'), false);
+  assert.deepEqual(visibleRadarHints(unknown), ['hint-quota-unknown']);
+  assert.ok(unknown.text('validation-lines').includes('Cuota diaria restante de Gmail: no disponible'));
+});
+
+test('AC-57 / D-58: cuota menor que las filas válidas muestra hint-quota-short con el número', () => {
+  const dom = radar('cuota-corta');
+  assert.equal(dom.text('tile-quota-value'), '1');
+  assert.equal(dom.isVisible('hint-quota-short'), true);
+  assert.equal(dom.text('hint-quota-short-n'), '1');
+  assert.equal(dom.isVisible('hint-quota-unknown'), false);
+  assert.deepEqual(visibleRadarHints(dom), ['hint-quota-short']);
+
+  // Con cuota suficiente, la ayuda se oculta al revalidar.
+  dom.click('validate');
+  dom.resolve(dom.lastCall('validateCampaign'), views.validationView('ok'));
+  assert.equal(dom.isVisible('hint-quota-short'), false);
+});
+
+test('AC-57 / D-58: todas las filas excluidas muestra hint-all-excluded', () => {
+  const dom = radar('todo-excluido');
+  assert.equal(dom.MailMergePanel.phase(), 'bloqueada');
+  assert.equal(dom.isVisible('hint-all-excluded'), true);
+  assert.deepEqual(visibleRadarHints(dom), ['hint-all-excluded']);
+  assert.equal(dom.text('tile-excluded-value'), '4');
+  assert.equal(dom.byId('meter-excluded').className, 'meter__seg meter__seg--excluded w-10');
+  assert.ok(dom.text('group-excluded').includes('resultado: Email Sent: 3'));
+
+  // Con errores globales no se muestra (la causa es otra).
+  const blocked = radar('bloqueada');
+  assert.equal(blocked.isVisible('hint-all-excluded'), false);
+});
+
+test('AC-57: los grupos de exclusiones, errores y filas se pliegan por botón con aria-expanded y sin ocultar nada en la confirmación', () => {
+  const dom = radar('ok');
+  assert.equal(dom.byId('toggle-excluded').tagName, 'BUTTON');
+  assert.equal(dom.attribute('toggle-excluded', 'aria-expanded'), 'false');
+  assert.equal(dom.attribute('toggle-invalid', 'aria-expanded'), 'true');
+  assert.equal(dom.attribute('toggle-rows', 'aria-expanded'), 'true');
+  assert.equal(dom.isVisible('group-excluded'), false);
+  assert.equal(dom.isVisible('group-invalid'), true);
+  assert.equal(dom.isVisible('group-rows'), true);
+  assert.equal(dom.text('toggle-excluded-count'), '1');
+  assert.equal(dom.text('toggle-invalid-count'), '1');
+  assert.equal(dom.text('toggle-rows-count'), '2');
+  assert.ok(dom.text('group-rows').includes('Fila 2 → alpha@example.test: a.pdf'));
+  assert.ok(dom.text('group-invalid').includes('Fila 5: Email Address inválido'));
+
+  const before = dom.calls.length;
+  dom.click('toggle-excluded');
+  assert.equal(dom.attribute('toggle-excluded', 'aria-expanded'), 'true');
+  assert.equal(dom.isVisible('group-excluded'), true);
+  dom.click('toggle-rows');
+  assert.equal(dom.attribute('toggle-rows', 'aria-expanded'), 'false');
+  assert.equal(dom.isVisible('group-rows'), false);
+  dom.click('toggle-rows');
+  assert.equal(dom.isVisible('group-rows'), true);
+  assert.equal(dom.calls.length, before, 'plegar no llama al servidor');
+  assert.equal(dom.MailMergePanel.phase(), 'lista', 'plegar no cambia la fase');
+
+  // Revalidar restaura el estado por defecto.
+  dom.click('validate');
+  dom.resolve(dom.lastCall('validateCampaign'), views.validationView('ok'));
+  assert.equal(dom.attribute('toggle-excluded', 'aria-expanded'), 'false');
+  assert.equal(dom.isVisible('group-excluded'), false);
+
+  // Grupos sin contenido ocultan también su botón.
+  const empty = radar('setup');
+  assert.equal(empty.isVisible('toggle-excluded'), false);
+  assert.equal(empty.isVisible('toggle-invalid'), false);
+  assert.equal(empty.isVisible('toggle-rows'), false);
+
+  // En la confirmación no hay grupos colapsables y la lista completa se ve.
+  const html = readSidebar();
+  const sendMarkup = /<div id="send-view"[^>]*>([\s\S]*?)<\/div>/.exec(html);
+  assert.ok(sendMarkup && !/toggle-/.test(sendMarkup[1]), 'send-view no contiene toggles');
+  withSendConfirmation(dom);
+  assert.equal(dom.isVisible('send-view'), true);
+  assert.ok(dom.text('send-view').includes('alpha@example.test'));
+  assert.ok(dom.text('send-view').includes('gamma@example.test'));
+  assert.equal(dom.created.includes('input'), false);
+});
+
+test('AC-57 / D-35: el plan de columnas se muestra como diff y Preparar columnas sigue llamando a applyColumnSetup con headerKey', () => {
+  const dom = radar('setup');
+  const diff = dom.text('setup-list');
+  assert.ok(diff.includes('~ Renombrar "Mail Merge Status" → "Resultado" (columna B)'));
+  assert.ok(diff.includes('~ Renombrar "Scheduled Date" → "Fecha" (columna C)'));
+  assert.ok(diff.includes('+ Agregar "Campaña" (columna D)'));
+  assert.ok(diff.includes('+ Agregar "Detalle" (columna E)'));
+  assert.equal(dom.isVisible('setup-box'), true);
+  assert.deepEqual(visibleRadarHints(dom), ['hint-setup']);
+  assert.equal(dom.byId('apply-setup').disabled, false);
+
+  dom.click('apply-setup');
+  assert.deepEqual(dom.lastCall('applyColumnSetup').args, ['["Email Address","Mail Merge Status","Scheduled Date"]']);
+  dom.resolve(dom.lastCall('applyColumnSetup'), { ok: true, errors: [], applied: { renames: [{}, {}], appends: [{}, {}] } });
+  assert.equal(dom.callsTo('validateCampaign').length, 2, 'revalida tras preparar');
+  dom.resolve(dom.lastCall('validateCampaign'), views.validationView('ok'));
+  assert.equal(dom.isVisible('setup-box'), false);
+  assert.equal(dom.isVisible('hint-setup'), false);
+
+  const blocked = radar('setup-bloqueado');
+  assert.ok(blocked.text('setup-list').includes('! La fila 4 tiene Scheduled Date con valor y el estado vacío'));
+  assert.deepEqual(visibleRadarHints(blocked), ['hint-setup-blocked']);
+  assert.equal(blocked.byId('apply-setup').disabled, true);
+  assert.equal(blocked.MailMergePanel.phase(), 'preparar-columnas');
+});
+
+test('AC-54 / D-47 (regresión): overwriteRows sigue siendo un aviso sin casilla y la validación no crea inputs', () => {
+  const dom = radar('sobrescritura');
+  assert.ok(dom.text('validation-result').includes('fila 3 (Campaña)'));
+  assert.ok(dom.text('validation-result').includes('fila 2 (Fecha, Detalle)'));
+  assert.equal(dom.created.includes('input'), false, 'la validación no crea casillas');
+  assert.equal(dom.isVisible('send-consent-box'), false);
+  assert.deepEqual(visibleRadarHints(dom), ['hint-overwrite']);
+
+  const clean = radar('ok');
+  assert.equal(clean.isVisible('hint-overwrite'), false);
+});
+
+test('AC-57: el mensaje de validación con problemas informa los conteos', () => {
+  const blocked = radar('bloqueada');
+  assert.equal(blocked.text('validation-message'), 'La validación encontró problemas: 1 globales · 1 filas con errores');
+  assert.equal(blocked.byId('validation-message').className, 'message error');
+
+  const ok = radar('ok');
+  assert.equal(ok.text('validation-message'), 'Validación sin errores globales.');
+  assert.equal(ok.byId('validation-message').className, 'message ok');
+});
+
+test('AC-57: revalidar no desprende los elementos estáticos del radar', () => {
+  const dom = radar('ok');
+  assert.ok(dom.text('validation-result').includes('alpha@example.test'));
+
+  dom.click('validate');
+  dom.resolve(
+    dom.lastCall('validateCampaign'),
+    views.validationView('ok', {
+      sheetName: 'Otra hoja',
+      quotaRemaining: 7,
+      counts: { valid: 1, invalid: 0, excluded: 0 },
+      excludedByReason: [],
+      rows: [{ rowNumber: 9, email: 'zeta@example.test', attachmentNames: [] }],
+      invalidRows: [],
+    })
+  );
+
+  // Solo quedan filas y tiles de la segunda validación.
+  const result = dom.text('validation-result');
+  assert.ok(result.includes('zeta@example.test'));
+  assert.ok(!result.includes('alpha@example.test'));
+  assert.ok(!result.includes('Fila 5'));
+  assert.ok(result.includes('Otra hoja'));
+  assert.equal(dom.text('tile-valid-value'), '1');
+  assert.equal(dom.text('tile-invalid-value'), '0');
+  assert.equal(dom.text('tile-quota-value'), '7');
+  assert.equal(dom.text('group-invalid'), '');
+  assert.equal(dom.text('group-excluded'), '');
+  assert.ok(dom.text('group-rows').includes('Fila 9 → zeta@example.test'));
+
+  // Los elementos estáticos siguen dentro de validation-result: el marcado
+  // los contiene y el script solo vacía validation-lines y group-*.
+  const html = readSidebar();
+  const block = /<div id="validation-result"[\s\S]*?<div id="setup-box"/.exec(html);
+  assert.ok(block, 'validation-result precede a setup-box');
+  for (const id of ['tile-valid-value', 'meter-valid', 'validation-lines', 'group-excluded', 'group-invalid', 'group-rows', 'toggle-excluded', 'toggle-invalid', 'toggle-rows']) {
+    assert.ok(block[0].includes(`id="${id}"`), `${id} vive dentro de validation-result`);
+  }
+  assert.ok(!/clear\(el\.validationResult\)/.test(html), 'validation-result no se vacía');
+  assert.ok(!/innerHTML/.test(html));
+  assert.equal((html.match(/setTimeout\(/g) || []).length, 2);
+});

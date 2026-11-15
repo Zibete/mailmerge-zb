@@ -79,7 +79,8 @@ function baseValidation() {
 
 const SETUP_HEADER_KEY = '["Email Address","Mail Merge Status","Scheduled Date"]';
 
-// Variantes: 'ok', 'setup', 'setup-bloqueado', 'bloqueada', 'consentimiento'.
+// Variantes: 'ok', 'setup', 'setup-bloqueado', 'bloqueada', 'consentimiento',
+// 'cuota-nula', 'cuota-corta', 'todo-excluido', 'sobrescritura'.
 function validationView(variant = 'ok', overrides = {}) {
   let view;
   switch (variant) {
@@ -135,6 +136,33 @@ function validationView(variant = 'ok', overrides = {}) {
       break;
     case 'consentimiento':
       view = { ...baseValidation(), overwriteRows: CONSENT_ROWS.map((row) => ({ ...row, columns: [...row.columns] })) };
+      break;
+    case 'cuota-nula':
+      view = { ...baseValidation(), quotaRemaining: null };
+      break;
+    case 'cuota-corta':
+      view = { ...baseValidation(), quotaRemaining: 1 };
+      break;
+    case 'todo-excluido':
+      view = {
+        ...baseValidation(),
+        counts: { valid: 0, invalid: 0, excluded: 4 },
+        excludedByReason: [
+          { reason: 'resultado: Email Sent', count: 3 },
+          { reason: 'fila oculta', count: 1 },
+        ],
+        rows: [],
+        invalidRows: [],
+      };
+      break;
+    case 'sobrescritura':
+      view = {
+        ...baseValidation(),
+        overwriteRows: [
+          { rowNumber: 2, columns: ['Fecha', 'Detalle'] },
+          { rowNumber: 3, columns: ['Campaña'] },
+        ],
+      };
       break;
     default:
       return unknownVariant('validationView', variant);

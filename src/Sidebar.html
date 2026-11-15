@@ -142,6 +142,18 @@
       .meter__seg--excluded { background: var(--muted); }
       .w-0 { flex-grow: 0; } .w-1 { flex-grow: 1; } .w-2 { flex-grow: 2; } .w-3 { flex-grow: 3; } .w-4 { flex-grow: 4; } .w-5 { flex-grow: 5; }
       .w-6 { flex-grow: 6; } .w-7 { flex-grow: 7; } .w-8 { flex-grow: 8; } .w-9 { flex-grow: 9; } .w-10 { flex-grow: 10; }
+      .tiles--radar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tiles--radar .tile__value { font-size: 16px; }
+      .meter[aria-hidden] { margin-bottom: var(--space-1); }
+
+      /* Grupos plegables del radar (D-57): botón con chevron por CSS */
+      .group__toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 32px; margin-top: var(--space-2); padding: 0 var(--space-1); background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; color: var(--text); font: 600 12px/1.2 var(--font); text-align: left; cursor: pointer; }
+      .group__toggle::after { content: ""; flex: none; width: 14px; height: 14px; margin-left: auto; background-color: var(--muted); -webkit-mask-image: var(--ic-chevron); mask-image: var(--ic-chevron); -webkit-mask-size: contain; mask-size: contain; transform: rotate(-90deg); }
+      .group__toggle[aria-expanded="true"]::after { transform: none; }
+      .group { padding-left: var(--space-1); }
+      .view ul.diff { margin: var(--space-1) 0; padding-left: 0; list-style: none; font-family: var(--mono); }
+      .view ul.diff li { padding-left: var(--space-2); }
+      .diff-note { margin-top: var(--space-2); }
       progress { display: block; width: 100%; height: 8px; margin-top: 10px; accent-color: var(--accent); }
 
       /* Compuerta de consentimiento */
@@ -185,7 +197,7 @@
       @media (prefers-reduced-motion: no-preference) {
         .btn, .chip, select, input, .rail__dot { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease; }
         .step__body { transition: opacity 0.15s ease; }
-        .step__toggle::after { transition: transform 0.15s ease; }
+        .step__toggle::after, .group__toggle::after { transition: transform 0.15s ease; }
         .rail__dot.is-current { animation: pulse 2s ease-in-out infinite; }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -268,10 +280,35 @@
             <button type="button" id="validate" class="btn">Validar</button>
           </div>
           <p id="validation-message" class="message" role="status" aria-live="polite"></p>
-          <div id="validation-result" class="view" hidden></div>
+          <div id="validation-result" class="view" hidden>
+            <div class="tiles tiles--radar">
+              <div id="tile-valid" class="tile"><span class="tile__label">Elegibles</span><span id="tile-valid-value" class="tile__value">0</span></div>
+              <div id="tile-invalid" class="tile"><span class="tile__label">Con errores</span><span id="tile-invalid-value" class="tile__value">0</span></div>
+              <div id="tile-excluded" class="tile"><span class="tile__label">Excluidas</span><span id="tile-excluded-value" class="tile__value">0</span></div>
+              <div id="tile-quota" class="tile"><span class="tile__label">Cuota</span><span id="tile-quota-value" class="tile__value">0</span></div>
+            </div>
+            <div class="meter" aria-hidden="true">
+              <span id="meter-valid" class="meter__seg meter__seg--valid w-0">0</span>
+              <span id="meter-invalid" class="meter__seg meter__seg--invalid w-0">0</span>
+              <span id="meter-excluded" class="meter__seg meter__seg--excluded w-0">0</span>
+            </div>
+            <p id="hint-quota-unknown" class="hint" hidden><span>No se pudo consultar la cuota diaria de Gmail: si se agota, el envío puede cortarse a mitad de camino.</span></p>
+            <p id="hint-quota-short" class="hint" hidden><span>La cuota diaria de Gmail alcanza para enviar como mucho <span id="hint-quota-short-n"></span> correos hoy; el resto queda pendiente para otro día.</span></p>
+            <p id="hint-all-excluded" class="hint" hidden><span>Todas las filas están excluidas: revisá la columna Resultado, las filas ocultas y los filtros de la pestaña.</span></p>
+            <div id="validation-lines"></div>
+            <p id="hint-overwrite" class="hint" hidden><span>Suelen ser filas con una prueba previa; la confirmación del envío te va a pedir consentimiento antes de reemplazar esos valores.</span></p>
+            <button type="button" id="toggle-excluded" class="group__toggle" aria-expanded="false" aria-controls="group-excluded" hidden><span>Excluidas por motivo</span><span id="toggle-excluded-count" class="chip"></span></button>
+            <div id="group-excluded" class="group" hidden></div>
+            <button type="button" id="toggle-invalid" class="group__toggle" aria-expanded="true" aria-controls="group-invalid" hidden><span>Filas con errores</span><span id="toggle-invalid-count" class="chip chip--danger"></span></button>
+            <div id="group-invalid" class="group"></div>
+            <button type="button" id="toggle-rows" class="group__toggle" aria-expanded="true" aria-controls="group-rows" hidden><span>Filas a enviar</span><span id="toggle-rows-count" class="chip chip--ok"></span></button>
+            <div id="group-rows" class="group"></div>
+          </div>
           <div id="setup-box" class="confirmation view" hidden>
             <p class="warning">La pestaña necesita preparar sus columnas antes de enviar.</p>
             <div id="setup-list"></div>
+            <p id="hint-setup" class="hint" hidden><span>Preparar columnas solo modifica la fila 1 (los encabezados): no mueve ni borra datos. Después se vuelve a validar sola.</span></p>
+            <p id="hint-setup-blocked" class="hint" hidden><span>Resolvé a mano los bloqueos de la lista y volvé a validar; Preparar columnas queda deshabilitado hasta entonces.</span></p>
             <div class="buttons">
               <button type="button" id="apply-setup" class="btn" disabled>Preparar columnas</button>
             </div>
@@ -401,6 +438,7 @@
           validate: byId('validate'),
           validationMessage: byId('validation-message'),
           validationResult: byId('validation-result'),
+          validationLines: byId('validation-lines'),
           setupBox: byId('setup-box'),
           setupList: byId('setup-list'),
           applySetup: byId('apply-setup'),
@@ -670,7 +708,7 @@
         var SEND_BUTTONS = ['execute-test', 'execute-send'];
         var CANCEL_BUTTONS = ['cancel-test', 'cancel-send'];
         // Lista cerrada de ayudas `hint-*` (D-58); los pasos 4 a 7 del plan la amplían.
-        var HINT_IDS = [];
+        var HINT_IDS = ['hint-setup', 'hint-setup-blocked', 'hint-quota-unknown', 'hint-quota-short', 'hint-all-excluded', 'hint-overwrite'];
 
         var previousPhase = null;
 
@@ -866,6 +904,30 @@
         // Ayudas contextuales (D-58): ids `hint-*` visibles para la fase.
         function hintsFor(phase, data) {
           var visible = [];
+          var validation = data.validation;
+          if (validation) {
+            var setup = validation.setup;
+            var counts = validation.counts || {};
+            var setupErrors = setup ? list(setup.errors).length : 0;
+            if (phase === 'preparar-columnas' && setupErrors === 0) {
+              visible.push('hint-setup');
+            }
+            if (setupErrors > 0) {
+              visible.push('hint-setup-blocked');
+            }
+            if (validation.quotaRemaining === null) {
+              visible.push('hint-quota-unknown');
+            }
+            if (typeof validation.quotaRemaining === 'number' && validation.quotaRemaining < count(counts.valid)) {
+              visible.push('hint-quota-short');
+            }
+            if (count(counts.valid) === 0 && count(counts.excluded) > 0 && list(validation.globalErrors).length === 0) {
+              visible.push('hint-all-excluded');
+            }
+            if (list(validation.overwriteRows).length > 0) {
+              visible.push('hint-overwrite');
+            }
+          }
           return visible;
         }
 
@@ -996,23 +1058,33 @@
 
         // --- Validación -------------------------------------------------------
 
+        // Lista "diff" del plan de columnas: prefijo en texto (`~` renombra,
+        // `+` agrega, `!` bloquea), sin depender del color ni de un icono.
+        function appendDiff(container, items) {
+          var diff = appendList(container, items);
+          diff.className = 'diff';
+          return diff;
+        }
+
         function renderSetup(setup) {
           clear(el.setupList);
           var blocked = list(setup.errors).length > 0;
           var changes = [];
           list(setup.renames).forEach(function (rename) {
-            changes.push('Renombrar "' + asText(rename.from) + '" → "' + asText(rename.to) + '" (columna ' + columnLetter(rename.column) + ')');
+            changes.push('~ Renombrar "' + asText(rename.from) + '" → "' + asText(rename.to) + '" (columna ' + columnLetter(rename.column) + ')');
           });
           list(setup.appends).forEach(function (append) {
-            changes.push('Agregar "' + asText(append.name) + '" (columna ' + columnLetter(append.column) + ')');
+            changes.push('+ Agregar "' + asText(append.name) + '" (columna ' + columnLetter(append.column) + ')');
           });
           if (changes.length > 0) {
             appendLine(el.setupList, 'Cambios en la fila de encabezados (los datos no se mueven):');
-            appendList(el.setupList, changes);
+            appendDiff(el.setupList, changes);
           }
           if (blocked) {
             appendLine(el.setupList, 'No se puede preparar hasta resolver a mano:', 'error');
-            appendList(el.setupList, list(setup.errors));
+            appendDiff(el.setupList, list(setup.errors).map(function (error) {
+              return '! ' + asText(error);
+            }));
           }
           if (list(setup.blockedRows).length > 0) {
             appendLine(el.setupList, 'Filas a resolver: ' + list(setup.blockedRows).map(asText).join(', '));
@@ -1021,85 +1093,139 @@
           el.setupBox.hidden = false;
         }
 
+        // Ancho discreto de un segmento de la barra: `w-0` … `w-10` en décimos.
+        function meterWidth(n, total) {
+          return 'w-' + (total > 0 ? Math.round((10 * n) / total) : 0);
+        }
+
+        function renderMeter(counts) {
+          var valid = count(counts.valid);
+          var invalid = count(counts.invalid);
+          var excluded = count(counts.excluded);
+          var total = valid + invalid + excluded;
+          [
+            ['meter-valid', 'meter__seg meter__seg--valid', valid],
+            ['meter-invalid', 'meter__seg meter__seg--invalid', invalid],
+            ['meter-excluded', 'meter__seg meter__seg--excluded', excluded]
+          ].forEach(function (segment) {
+            var node = byId(segment[0]);
+            node.className = segment[1] + ' ' + meterWidth(segment[2], total);
+            setText(node, segment[2]);
+          });
+        }
+
+        // Grupo plegable: el contenido va en `group-*` (que se vacía) y el
+        // botón `toggle-*` solo cambia su conteo; un grupo sin contenido
+        // oculta también su botón. Siempre nace en su estado por defecto.
+        function resetGroup(name, total, open) {
+          var toggle = byId('toggle-' + name);
+          var group = byId('group-' + name);
+          setText(byId('toggle-' + name + '-count'), total);
+          toggle.hidden = total === 0;
+          group.hidden = total === 0 || !open;
+          setAria(toggle, 'aria-expanded', open ? 'true' : 'false');
+          return group;
+        }
+
+        function toggleGroup(name) {
+          var toggle = byId('toggle-' + name);
+          var open = toggle.getAttribute('aria-expanded') !== 'true';
+          setAria(toggle, 'aria-expanded', open ? 'true' : 'false');
+          byId('group-' + name).hidden = !open;
+        }
+
         function renderValidation(view) {
-          var box = el.validationResult;
-          clear(box);
+          // `validation-result` es marcado estático (tiles, barra, grupos): solo
+          // se vacían `validation-lines` y los `group-*`, nunca el contenedor.
+          var lines = el.validationLines;
+          clear(lines);
+          ['excluded', 'invalid', 'rows'].forEach(function (name) {
+            clear(byId('group-' + name));
+          });
           state.setupHeaderKey = null;
           el.setupBox.hidden = true;
           view = view || {};
           state.lastValidation = view;
 
+          var counts = view.counts || {};
+          var quotaKnown = typeof view.quotaRemaining === 'number';
+          setText(byId('tile-valid-value'), count(counts.valid));
+          setText(byId('tile-invalid-value'), count(counts.invalid));
+          setText(byId('tile-excluded-value'), count(counts.excluded));
+          setText(byId('tile-quota-value'), quotaKnown ? view.quotaRemaining : 'no disponible');
+          setText(byId('hint-quota-short-n'), quotaKnown ? view.quotaRemaining : '');
+          renderMeter(counts);
+
           var globalErrors = list(view.globalErrors);
           if (globalErrors.length > 0) {
-            appendLine(box, 'Errores que afectan a toda la campaña:', 'error');
-            appendList(box, globalErrors);
+            appendLine(lines, 'Errores que afectan a toda la campaña:', 'error');
+            appendList(lines, globalErrors);
           }
           if (view.sheetName) {
-            appendLine(box, 'Pestaña: ' + asText(view.sheetName));
+            appendLine(lines, 'Pestaña: ' + asText(view.sheetName));
           }
           if (view.subject) {
-            appendLine(box, 'Asunto: ' + asText(view.subject));
+            appendLine(lines, 'Asunto: ' + asText(view.subject));
           }
           if (view.from) {
-            appendLine(box, 'Remitente: ' + asText(view.from));
+            appendLine(lines, 'Remitente: ' + asText(view.from));
           }
           if (view.replyTo) {
-            appendLine(box, 'Reply-To: ' + asText(view.replyTo));
+            appendLine(lines, 'Reply-To: ' + asText(view.replyTo));
           }
+          appendLine(lines, 'Cuota diaria restante de Gmail: ' + (quotaKnown ? view.quotaRemaining : 'no disponible'));
           appendLine(
-            box,
-            'Cuota diaria restante de Gmail: ' + (typeof view.quotaRemaining === 'number' ? view.quotaRemaining : 'no disponible')
-          );
-          var counts = view.counts || {};
-          appendLine(
-            box,
+            lines,
             'Filas válidas: ' + count(counts.valid) + ' · Con errores: ' + count(counts.invalid) + ' · Excluidas: ' + count(counts.excluded)
           );
-          var excluded = list(view.excludedByReason);
-          if (excluded.length > 0) {
-            appendLine(box, 'Excluidas por motivo:');
-            appendList(box, excluded.map(function (item) {
-              return asText(item.reason) + ': ' + count(item.count);
-            }));
-          }
           var common = list(view.commonAttachments).map(asText);
           if (common.length > 0) {
-            appendLine(box, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
-          }
-          var rows = list(view.rows);
-          if (rows.length > 0) {
-            appendLine(box, 'Filas a enviar:');
-            appendList(box, rows.map(rowLine));
-          }
-          if (count(view.moreRows) > 0) {
-            appendLine(box, 'y ' + count(view.moreRows) + ' filas más');
-          }
-          var invalid = list(view.invalidRows);
-          if (invalid.length > 0) {
-            appendLine(box, 'Filas con errores (no se envían):', 'error');
-            appendList(box, invalid.map(function (row) {
-              return 'Fila ' + asText(row.rowNumber) + ': ' + list(row.reasons).map(asText).join('; ');
-            }));
-          }
-          if (count(view.moreInvalid) > 0) {
-            appendLine(box, 'y ' + count(view.moreInvalid) + ' filas más con errores');
+            appendLine(lines, 'Adjuntos del borrador (para todas las filas): ' + common.join(', '));
           }
           var overwrite = list(view.overwriteRows);
           if (overwrite.length > 0) {
             appendLine(
-              box,
+              lines,
               'Aviso: al enviar se reemplazarán valores existentes de Fecha, Campaña o Detalle en estas filas; la confirmación pedirá tu consentimiento:',
               'warning'
             );
-            appendList(box, overwrite.map(overwriteLine));
+            appendList(lines, overwrite.map(overwriteLine));
           }
-          box.hidden = false;
+
+          var excluded = list(view.excludedByReason);
+          var excludedGroup = resetGroup('excluded', excluded.length > 0 ? count(counts.excluded) : 0, false);
+          if (excluded.length > 0) {
+            appendList(excludedGroup, excluded.map(function (item) {
+              return asText(item.reason) + ': ' + count(item.count);
+            }));
+          }
+          var rows = list(view.rows);
+          var rowsGroup = resetGroup('rows', rows.length > 0 ? count(counts.valid) : 0, true);
+          if (rows.length > 0) {
+            appendList(rowsGroup, rows.map(rowLine));
+          }
+          if (count(view.moreRows) > 0) {
+            appendLine(rowsGroup, 'y ' + count(view.moreRows) + ' filas más');
+          }
+          var invalid = list(view.invalidRows);
+          var invalidGroup = resetGroup('invalid', invalid.length > 0 ? count(counts.invalid) : 0, true);
+          if (invalid.length > 0) {
+            appendList(invalidGroup, invalid.map(function (row) {
+              return 'Fila ' + asText(row.rowNumber) + ': ' + list(row.reasons).map(asText).join('; ');
+            }));
+          }
+          if (count(view.moreInvalid) > 0) {
+            appendLine(invalidGroup, 'y ' + count(view.moreInvalid) + ' filas más con errores');
+          }
+          el.validationResult.hidden = false;
           if (view.setup && view.setup.needed) {
             renderSetup(view.setup);
           }
           showMessage(
             el.validationMessage,
-            view.ok ? 'Validación sin errores globales.' : 'La validación encontró problemas.',
+            view.ok
+              ? 'Validación sin errores globales.'
+              : 'La validación encontró problemas: ' + globalErrors.length + ' globales · ' + count(counts.invalid) + ' filas con errores',
             view.ok ? 'ok' : 'error'
           );
         }
@@ -1553,6 +1679,12 @@
         // "Ir a Envío" solo abre el paso 4: no llama al servidor.
         el.skipTest.addEventListener('click', function () {
           openStep(4, true);
+        });
+        // Grupos plegables del radar: solo presentación, sin llamar al servidor.
+        ['excluded', 'invalid', 'rows'].forEach(function (name) {
+          byId('toggle-' + name).addEventListener('click', function () {
+            toggleGroup(name);
+          });
         });
 
         loadPanel();
