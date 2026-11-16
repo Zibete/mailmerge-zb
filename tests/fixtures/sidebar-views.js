@@ -139,6 +139,8 @@ function validationView(variant = 'ok', overrides = {}) {
         ...baseValidation(),
         ok: false,
         globalErrors: ['El borrador usa {{Apellido}}, que no es un encabezado de la pestaña'],
+        counts: { valid: 2, invalid: 1, excluded: 1 },
+        invalidRows: [{ rowNumber: 5, reasons: ['Email Address inválido'] }],
       };
       break;
     case 'consentimiento':
