@@ -777,7 +777,7 @@ test('D-44: un texto del servidor con marcado se muestra literal, sin crear elem
   dom.click('validate');
   dom.resolve(
     dom.lastCall('validateCampaign'),
-    validationView({ sheetName: '<b>x</b>', rows: [{ rowNumber: 2, email: '<b>x</b>', attachmentNames: ['<img src=y>'] }] })
+    validationView({ sheetName: '<b>x</b>', counts: { valid: 1, invalid: 0, excluded: 0 }, invalidRows: [], rows: [{ rowNumber: 2, email: '<b>x</b>', attachmentNames: ['<img src=y>'] }] })
   );
   dom.click('review-send');
   dom.resolve(dom.lastCall('prepareSendPending'), {
