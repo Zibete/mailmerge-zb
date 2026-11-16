@@ -4,6 +4,14 @@
 
 Fecha de la verificación: 2026-11-09 (V2) y 2026-11-15 (Eclipse Console, AC-56 a AC-64). Planes: `plans/2026-11-09_mail-merge-v2.md` (evoluciona `plans/2026-11-08_mail-merge-v1.md`) y `plans/2026-11-14_eclipse-console-ui.md` (diseño vigente de la interfaz). Guía de operación: [`OPERATIONS.md`](OPERATIONS.md).
 
+## Cambio en rama: filas inválidas y navegación (2026-11-15)
+
+**Estado: pendiente de ejecutar la suite completa sobre la rama.** Se implementó en `fix/validacion-filas-invalidas-navegacion` una protección para que `Revisar envío` no prepare un envío parcial cuando hay filas pendientes inválidas, y se corrigió la señalización del paso de validación y del riel. Plan: `plans/2026-11-15_validacion-filas-invalidas-navegacion.md`.
+
+- **Verificado:** análisis de sintaxis de los seis archivos JavaScript modificados (incluido el script embebido en `Sidebar.html`) y prueba aislada del `prepareConfirmation_` de la rama con 4 válidas y 1 inválida: rechazo sin token, sin caché, escrituras ni correos.
+- **Pendiente:** `node --test` completo con el contenido actualizado de la rama, revisión de diferencias y piloto manual en Sheets con datos ficticios. La evidencia anterior de `LOCAL_VERIFIED` no constituye aprobación automática de este cambio.
+- **No realizado:** `clasp push`, envíos reales, merge a `main`.
+
 ## Leyenda
 
 - `PASS (local mock)`: cubierto por tests automáticos que pasan con servicios simulados. En AC-29 y AC-30 la evidencia es la salida de comandos locales, no un mock.
