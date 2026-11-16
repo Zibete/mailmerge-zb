@@ -474,14 +474,15 @@ test('AC-56 / D-56: preparar columnas, bloqueada, revisando-envio, enviando, ter
 test('D-56: las fases no cambian disabled de ningún botón respecto de refreshControls', () => {
   const BUTTONS = ['save', 'validate', 'apply-setup', 'review-test', 'execute-test', 'cancel-test', 'review-send', 'execute-send', 'cancel-send'];
   // true = deshabilitado, según las reglas de refreshControls() (busy, running,
-  // setupHeaderKey, confirmaciones vivas y canExecute).
+  // setupHeaderKey, confirmaciones vivas, canExecute y filas pendientes inválidas).
   const IDLE = [false, false, true, false, true, true, false, true, true];
+  const INVALID_PENDING = [false, false, true, false, true, true, true, true, true];
   const cases = [
     { phase: 'sin-configurar', build: () => loaded(views.panelState({ current: null })), disabled: IDLE },
     { phase: 'configurada', build: () => loaded(), disabled: IDLE },
     { phase: 'preparar-columnas', build: () => validated('setup'), disabled: [false, false, false, false, true, true, false, true, true] },
     { phase: 'preparar-columnas', build: () => validated('setup-bloqueado'), disabled: IDLE },
-    { phase: 'bloqueada', build: () => validated('bloqueada'), disabled: IDLE },
+    { phase: 'bloqueada', build: () => validated('bloqueada'), disabled: INVALID_PENDING },
     { phase: 'lista', build: () => validated('ok'), disabled: IDLE },
     {
       phase: 'revisando-prueba',
