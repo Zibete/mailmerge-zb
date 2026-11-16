@@ -4,6 +4,16 @@
 
 Fecha de la verificación: 2026-11-09 (V2) y 2026-11-15 (Eclipse Console, AC-56 a AC-64). Planes: `plans/2026-11-09_mail-merge-v2.md` (evoluciona `plans/2026-11-08_mail-merge-v1.md`) y `plans/2026-11-14_eclipse-console-ui.md` (diseño vigente de la interfaz). Guía de operación: [`OPERATIONS.md`](OPERATIONS.md).
 
+## Cambio en rama: filas inválidas y navegación (2026-11-15)
+
+**Estado: `LOCAL_VERIFIED` para esta rama.** Se implementó en `fix/validacion-filas-invalidas-navegacion` la protección para impedir envíos parciales cuando hay filas pendientes inválidas, y la señalización correcta del paso de validación y del riel. Plan: `plans/2026-11-15_validacion-filas-invalidas-navegacion.md`.
+
+- **Suite completa verificada en GitHub Actions:** [ejecución 43781480873](https://github.com/Zibete/mailmerge-zb/actions/runs/43781480873), Node.js 22, `node --test`: **382 pruebas, 382 aprobadas, 0 fallidas, 0 omitidas**. El workflow `.github/workflows/tests.yml` ejecuta la suite en push y pull request.
+- **Verificado adicionalmente:** análisis de sintaxis del script embebido de `Sidebar.html` y prueba aislada de `prepareConfirmation_` con 4 válidas y 1 inválida: rechazo sin token, sin caché, escrituras ni correos.
+- **Revisión ampliada:** 15 archivos de tests, 354 declaraciones `test()` (los casos parametrizados elevan el total ejecutado a 382). Se actualizaron expectativas de fixtures de UX y de la compuerta de envío sin eliminar pruebas de seguridad.
+- **Pendiente:** piloto manual en Google Sheets con datos ficticios y verificación real de UX.
+- **No realizado:** `clasp push`, envíos reales, merge a `main`.
+
 ## Leyenda
 
 - `PASS (local mock)`: cubierto por tests automáticos que pasan con servicios simulados. En AC-29 y AC-30 la evidencia es la salida de comandos locales, no un mock.

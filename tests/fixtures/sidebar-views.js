@@ -63,7 +63,7 @@ function baseValidation() {
     from: USER,
     replyTo: '',
     quotaRemaining: 95,
-    counts: { valid: 2, invalid: 1, excluded: 1 },
+    counts: { valid: 2, invalid: 0, excluded: 1 },
     excludedByReason: [{ reason: 'resultado: Email Sent', count: 1 }],
     commonAttachments: [],
     rows: [
@@ -71,7 +71,7 @@ function baseValidation() {
       { rowNumber: 3, email: 'beta@example.test', attachmentNames: [] },
     ],
     moreRows: 0,
-    invalidRows: [{ rowNumber: 5, reasons: ['Email Address inválido'] }],
+    invalidRows: [],
     moreInvalid: 0,
     overwriteRows: [],
   };
@@ -86,6 +86,13 @@ function validationView(variant = 'ok', overrides = {}) {
   switch (variant) {
     case 'ok':
       view = baseValidation();
+      break;
+    case 'con-errores':
+      view = {
+        ...baseValidation(),
+        counts: { valid: 2, invalid: 1, excluded: 1 },
+        invalidRows: [{ rowNumber: 5, reasons: ['Email Address inválido'] }],
+      };
       break;
     case 'setup':
       view = {
@@ -132,6 +139,8 @@ function validationView(variant = 'ok', overrides = {}) {
         ...baseValidation(),
         ok: false,
         globalErrors: ['El borrador usa {{Apellido}}, que no es un encabezado de la pestaña'],
+        counts: { valid: 2, invalid: 1, excluded: 1 },
+        invalidRows: [{ rowNumber: 5, reasons: ['Email Address inválido'] }],
       };
       break;
     case 'consentimiento':

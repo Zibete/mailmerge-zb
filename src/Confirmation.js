@@ -131,6 +131,21 @@ function prepareConfirmation_(deps, kind, rowNumber) {
     return confirmationRejected_(report.globalErrors);
   }
 
+  // Ninguna fila pendiente puede desaparecer silenciosamente de la revisión
+  // por tener un error de validación. La prueba individual sigue permitida.
+  if (kind === 'send' && report.invalid.length > 0) {
+    const numbers = report.invalid.slice(0, 10).map(function (row) {
+      return row.rowNumber;
+    });
+    const more = report.invalid.length - numbers.length;
+    const suffix = more > 0 ? ' (y ' + more + ' más)' : '';
+    return confirmationRejected_([
+      'Hay ' + report.invalid.length + (report.invalid.length === 1 ? ' fila con errores' : ' filas con errores') +
+      ' (filas: ' + numbers.join(', ') + suffix + '). Corregí los datos o marcá Resultado = SKIP ' +
+      'en esas filas y volvé a validar antes de enviar',
+    ]);
+  }
+
   let rows;
   if (kind === 'send') {
     rows = report.valid.slice().sort(byRowNumber_);

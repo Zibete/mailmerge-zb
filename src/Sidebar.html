@@ -768,7 +768,8 @@
 
           el.testRow.disabled = state.busy.test || isRunning;
           el.reviewTest.disabled = state.busy.test || isRunning || liveConfirmation('test');
-          el.reviewSend.disabled = state.busy.send || isRunning || liveConfirmation('send');
+          el.reviewSend.disabled = state.busy.send || isRunning || liveConfirmation('send') ||
+            Boolean(state.lastValidation && count((state.lastValidation.counts || {}).invalid) > 0);
 
           ['test', 'send'].forEach(function (kind) {
             var ui = confirmUi[kind];
@@ -864,7 +865,8 @@
           if (validation.setup && validation.setup.needed) {
             return 'preparar-columnas';
           }
-          if (list(validation.globalErrors).length > 0 || count((validation.counts || {}).valid) === 0) {
+          if (list(validation.globalErrors).length > 0 || count((validation.counts || {}).valid) === 0 ||
+              count((validation.counts || {}).invalid) > 0) {
             return 'bloqueada';
           }
           return 'lista';
@@ -897,6 +899,7 @@
             setAria(toggle, 'aria-expanded', open ? 'true' : 'false');
             setClass(toggle, 'step__toggle', { 'is-open': open });
           });
+          renderRail(derivePhase(state));
           renderOperationBanner();
           if (moveFocus && n > 0) {
             var target = byId(n <= 4 ? 'step-' + n + '-toggle' : 'console-title');
@@ -966,7 +969,7 @@
             if (validation.setup && validation.setup.needed) {
               return { chip: 'Preparar', tone: list(validation.setup.errors).length > 0 ? 'danger' : 'warn', summary: summary };
             }
-            if (list(validation.globalErrors).length > 0 || count(counts.valid) === 0) {
+            if (list(validation.globalErrors).length > 0 || count(counts.valid) === 0 || count(counts.invalid) > 0) {
               return { chip: 'Bloqueada', tone: 'danger', summary: summary };
             }
             return { chip: 'Lista', tone: 'ok', summary: summary };
@@ -1000,10 +1003,15 @@
         }
 
         function renderRail(phase) {
-          var current = RAIL_CURRENT[phase];
+          var progressStep = RAIL_CURRENT[phase];
+          var current = state.openStep >= 1 && state.openStep <= 4 ? state.openStep : progressStep;
           STEPS.forEach(function (i) {
             var dot = byId('rail-' + i);
-            setClass(dot, 'rail__dot', { 'is-done': i < current, 'is-current': i === current, 'is-locked': i > current });
+            setClass(dot, 'rail__dot', {
+              'is-done': i < progressStep && i !== current,
+              'is-current': i === current,
+              'is-locked': i > progressStep && i !== current
+            });
             if (i === current) {
               setAria(dot, 'aria-current', 'step');
             } else {
@@ -1400,13 +1408,13 @@
           if (view.setup && view.setup.needed) {
             renderSetup(view.setup);
           }
-          showMessage(
-            el.validationMessage,
-            view.ok
-              ? ''
-              : 'La validación encontró problemas: ' + globalErrors.length + ' globales · ' + count(counts.invalid) + ' filas con errores',
-            view.ok ? '' : 'error'
-          );
+          var invalidCount = count(counts.invalid);
+          var invalidPending = invalidCount > 0 && globalErrors.length === 0 && !(view.setup && view.setup.needed);
+          var issueText = invalidPending
+            ? 'Hay ' + invalidCount + (invalidCount === 1 ? ' fila con errores. Corregila o marcá' : ' filas con errores. Corregilas o marcá') +
+              ' Resultado = SKIP y volvé a validar antes de enviar.'
+            : 'La validación encontró problemas: ' + globalErrors.length + ' globales · ' + invalidCount + ' filas con errores';
+          showMessage(el.validationMessage, invalidPending || !view.ok ? issueText : '', invalidPending || !view.ok ? 'error' : '');
         }
 
         function runValidation() {
