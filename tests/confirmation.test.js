@@ -185,6 +185,12 @@ test('S-04: una fila inválida impide preparar un envío parcial; la prueba vál
 
   const testPrep = ctx.prepareConfirmation_(fake.deps, 'test', 2);
   assert.equal(testPrep.ok, true, 'la prueba individual de una fila válida no queda bloqueada');
+
+  // Corregir el adjunto permite una nueva confirmación, sin estado residual.
+  fake.setCell(3, 'File Attachments', '');
+  const corrected = ctx.prepareConfirmation_(fake.deps, 'send');
+  assert.equal(corrected.ok, true);
+  assert.equal(corrected.view.count, 3);
   assertNoSheetEffects(fake);
 });
 
