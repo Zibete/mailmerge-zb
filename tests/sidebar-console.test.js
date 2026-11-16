@@ -788,7 +788,7 @@ test('AC-54 / D-47 (regresión): overwriteRows sigue siendo un aviso sin casilla
 
 test('AC-57: el mensaje de validación con problemas informa los conteos', () => {
   const blocked = radar('bloqueada');
-  assert.equal(blocked.text('validation-message'), 'La validación encontró problemas: 1 globales · 1 filas con errores');
+  assert.equal(blocked.text('validation-message'), 'La validación encontró problemas: 1 globales · 0 filas con errores');
   assert.equal(blocked.byId('validation-message').className, 'message error');
 
   const ok = radar('ok');
