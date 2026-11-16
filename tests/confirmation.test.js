@@ -173,6 +173,21 @@ test('AC-34: con errores globales → ok: false sin cachePut (send y test)', () 
   assertRejected(fake, ctx.prepareConfirmation_(fake.deps, 'test', 2), /remitente/);
 });
 
+test('S-04: una fila inválida impide preparar un envío parcial; la prueba válida sigue permitida', () => {
+  const { ctx, fake } = setup();
+  fake.setCell(3, 'File Attachments', fileLink(DRIVE_IDS.MISSING));
+
+  const result = ctx.prepareConfirmation_(fake.deps, 'send');
+  assertRejected(fake, result, /Hay 1 fila con errores.*filas: 3.*Resultado = SKIP/);
+  assert.equal(fake.calls.sent.length, 0);
+  assert.equal(fake.getCell(3, 'Resultado'), '');
+  assert.equal(fake.getCell(3, 'Detalle'), '');
+
+  const testPrep = ctx.prepareConfirmation_(fake.deps, 'test', 2);
+  assert.equal(testPrep.ok, true, 'la prueba individual de una fila válida no queda bloqueada');
+  assertNoSheetEffects(fake);
+});
+
 test('prepareConfirmation_ con un kind desconocido → ok: false sin tocar la caché', () => {
   const { ctx, fake } = setup();
 
