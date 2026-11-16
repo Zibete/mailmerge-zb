@@ -6,10 +6,12 @@ Fecha de la verificación: 2026-11-09 (V2) y 2026-11-15 (Eclipse Console, AC-56 
 
 ## Cambio en rama: filas inválidas y navegación (2026-11-15)
 
-**Estado: pendiente de ejecutar la suite completa sobre la rama.** Se implementó en `fix/validacion-filas-invalidas-navegacion` una protección para que `Revisar envío` no prepare un envío parcial cuando hay filas pendientes inválidas, y se corrigió la señalización del paso de validación y del riel. Plan: `plans/2026-11-15_validacion-filas-invalidas-navegacion.md`.
+**Estado: `LOCAL_VERIFIED` para esta rama.** Se implementó en `fix/validacion-filas-invalidas-navegacion` la protección para impedir envíos parciales cuando hay filas pendientes inválidas, y la señalización correcta del paso de validación y del riel. Plan: `plans/2026-11-15_validacion-filas-invalidas-navegacion.md`.
 
-- **Verificado:** análisis de sintaxis de los seis archivos JavaScript modificados (incluido el script embebido en `Sidebar.html`) y prueba aislada del `prepareConfirmation_` de la rama con 4 válidas y 1 inválida: rechazo sin token, sin caché, escrituras ni correos.
-- **Pendiente:** `node --test` completo con el contenido actualizado de la rama, revisión de diferencias y piloto manual en Sheets con datos ficticios. La evidencia anterior de `LOCAL_VERIFIED` no constituye aprobación automática de este cambio.
+- **Suite completa verificada en GitHub Actions:** [ejecución 43781480873](https://github.com/Zibete/mailmerge-zb/actions/runs/43781480873), Node.js 22, `node --test`: **382 pruebas, 382 aprobadas, 0 fallidas, 0 omitidas**. El workflow `.github/workflows/tests.yml` ejecuta la suite en push y pull request.
+- **Verificado adicionalmente:** análisis de sintaxis del script embebido de `Sidebar.html` y prueba aislada de `prepareConfirmation_` con 4 válidas y 1 inválida: rechazo sin token, sin caché, escrituras ni correos.
+- **Revisión ampliada:** 15 archivos de tests, 354 declaraciones `test()` (los casos parametrizados elevan el total ejecutado a 382). Se actualizaron expectativas de fixtures de UX y de la compuerta de envío sin eliminar pruebas de seguridad.
+- **Pendiente:** piloto manual en Google Sheets con datos ficticios y verificación real de UX.
 - **No realizado:** `clasp push`, envíos reales, merge a `main`.
 
 ## Leyenda
