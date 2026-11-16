@@ -232,19 +232,22 @@ test('AC-11: filas ocultas por el usuario o por un filtro no entran en la confir
   assert.equal(status(fake, 4), '');
 });
 
-test('AC-07 / AC-13: filas inválidas en la validación nunca llegan a Gmail en el envío real', () => {
+test('AC-07 / AC-13 / S-04: filas inválidas impiden confirmar un envío parcial', () => {
   const { ctx, fixture, fake } = setup();
   fake.setCell(2, 'Email Address', 'alpha@example.test; beta@example.test');
   fixture.drive.files[DRIVE_IDS.PDF_BETA].noAccess = true;
-  const { prep, result } = runSend(ctx, fake);
+  const prep = plain(ctx.prepareConfirmation_(fake.deps, 'send'));
 
-  assert.equal(prep.view.invalidCount, 2);
-  assert.deepEqual(prep.view.rows.map((row) => row.rowNumber), [4]);
-  assert.deepEqual(sentTo(fake), [EMAILS[4]]);
-  assert.equal(result.counts.sent, 1);
-  assert.deepEqual(cellWriteRows(fake), [4, 4]);
+  assert.equal(prep.ok, false);
+  assert.equal(prep.token, '');
+  assert.equal(prep.view, null);
+  assert.match(prep.errors.join(' '), /Hay 2 filas con errores.*filas: 2, 3/);
+  assert.deepEqual(sentTo(fake), []);
+  assert.deepEqual(cellWriteRows(fake), []);
+  assert.equal(fake.calls.cachePuts.length, 0);
   assert.equal(status(fake, 2), '');
   assert.equal(status(fake, 3), '');
+  assert.equal(status(fake, 4), '');
 });
 
 test('AC-09: un PDF exportado que supera el límite en la Fase B omite la fila sin claim ni envío', () => {
