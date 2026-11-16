@@ -277,7 +277,7 @@ test('AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el
   assert.equal(dom.isVisible('step-3-body'), true);
   assert.deepEqual(openSteps(dom), [3]);
   assert.equal(dom.focusedId(), 'step-3-toggle');
-  assert.equal(dom.text('step-2-summary'), '2 elegibles · 1 errores');
+  assert.equal(dom.text('step-2-summary'), '2 elegibles · 0 errores');
   assert.equal(dom.text('step-2-chip'), 'Lista');
   assert.equal(isPrimary(dom, 'review-test'), true);
   assert.equal(isPrimary(dom, 'validate'), false);
@@ -290,6 +290,8 @@ test('AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el
   assert.equal(dom.calls.length, before, 'Ir a Envío no llama al servidor');
   assert.deepEqual(openSteps(dom), [4]);
   assert.equal(dom.focusedId(), 'step-4-toggle');
+  assert.equal(dom.attribute('rail-4', 'aria-current'), 'step', 'el riel sigue el paso 4 abierto');
+  assert.equal(dom.byId('rail-3').className, 'rail__dot', 'la prueba omitida no figura como completada');
   assert.equal(dom.MailMergePanel.phase(), 'lista');
 
   // Guardar de nuevo borra la validación: fase configurada y paso 2 pendiente.
@@ -299,6 +301,34 @@ test('AC-56 / D-57: una validación correcta abre el paso 3 con foco y resume el
   assert.equal(dom.text('step-2-chip'), 'Pendiente');
   assert.equal(dom.text('step-2-summary'), '');
   assert.equal(dom.isVisible('skip-test'), false);
+});
+
+test('S-04: una fila inválida bloquea el envío y mantiene visible el paso de validación', () => {
+  const dom = validated('con-errores');
+  assert.equal(dom.MailMergePanel.phase(), 'bloqueada');
+  assert.deepEqual(openSteps(dom), [2]);
+  assert.equal(dom.text('step-2-summary'), '2 elegibles · 1 errores');
+  assert.equal(dom.text('step-2-chip'), 'Bloqueada');
+  assert.match(dom.text('validation-message'), /Hay 1 fila con errores.*Resultado = SKIP/);
+  assert.equal(dom.byId('review-send').disabled, true);
+  assert.equal(dom.byId('review-test').disabled, false, 'se puede probar una fila válida');
+  assert.equal(dom.isVisible('skip-test'), false);
+
+  const before = dom.calls.length;
+  dom.click('step-4-toggle');
+  assert.deepEqual(openSteps(dom), [4]);
+  assert.equal(dom.attribute('rail-4', 'aria-current'), 'step');
+  assert.equal(dom.byId('rail-3').className, 'rail__dot is-locked');
+  assert.equal(dom.calls.length, before, 'navegar no genera una confirmación');
+  dom.click('step-2-toggle');
+  assert.equal(dom.attribute('rail-2', 'aria-current'), 'step');
+
+  // Corregida la fila, revalidar restablece el flujo normal.
+  dom.click('validate');
+  dom.resolve(dom.lastCall('validateCampaign'), views.validationView('ok'));
+  assert.equal(dom.MailMergePanel.phase(), 'lista');
+  assert.deepEqual(openSteps(dom), [3]);
+  assert.equal(dom.byId('review-send').disabled, false);
 });
 
 test('AC-56 / D-57: acordeón exclusivo con cierre propio y retorno seguro a una confirmación viva', () => {
@@ -564,10 +594,10 @@ test('AC-61 / D-50: aria-expanded y aria-current se actualizan y el foco sigue a
   assert.equal(dom.focusedId(), 'step-3-toggle');
   assert.equal(dom.text('status-live'), 'Paso 3: Prueba');
 
-  // Abrir a mano no mueve el foco ni cambia la etapa del riel.
+  // Abrir a mano no mueve el foco, pero el indicador sigue el paso visible.
   dom.click('step-1-toggle');
   assert.deepEqual(expanded(), ['true', 'false', 'false', 'false']);
-  assert.deepEqual(current(), [null, null, 'step', null]);
+  assert.deepEqual(current(), ['step', null, null, null]);
   assert.equal(dom.focusedId(), 'step-3-toggle');
   assert.equal(dom.byId('step-1-toggle').className, 'step__toggle is-open');
   assert.equal(dom.byId('step-3-toggle').className, 'step__toggle');
@@ -607,7 +637,7 @@ function visibleRadarHints(dom) {
 }
 
 test('AC-57: los tiles muestran válidas, con errores, excluidas y cuota exactamente como la ValidationView', () => {
-  const dom = radar('ok');
+  const dom = radar('con-errores');
   assert.equal(dom.text('tile-valid-value'), '2');
   assert.equal(dom.text('tile-invalid-value'), '1');
   assert.equal(dom.text('tile-excluded-value'), '1');
@@ -669,7 +699,7 @@ test('AC-57 / D-58: todas las filas excluidas muestra hint-all-excluded', () => 
 });
 
 test('AC-57: los grupos de exclusiones, errores y filas se pliegan por botón con aria-expanded y sin ocultar nada en la confirmación', () => {
-  const dom = radar('ok');
+  const dom = radar('con-errores');
   assert.equal(dom.byId('toggle-excluded').tagName, 'BUTTON');
   assert.equal(dom.attribute('toggle-excluded', 'aria-expanded'), 'false');
   assert.equal(dom.attribute('toggle-invalid', 'aria-expanded'), 'true');
@@ -693,7 +723,7 @@ test('AC-57: los grupos de exclusiones, errores y filas se pliegan por botón co
   dom.click('toggle-rows');
   assert.equal(dom.isVisible('group-rows'), true);
   assert.equal(dom.calls.length, before, 'plegar no llama al servidor');
-  assert.equal(dom.MailMergePanel.phase(), 'lista', 'plegar no cambia la fase');
+  assert.equal(dom.MailMergePanel.phase(), 'bloqueada', 'plegar no cambia la fase');
 
   // Revalidar restaura el estado por defecto.
   dom.click('validate');
